@@ -80,7 +80,10 @@ fn ext2_half_md4(hash: &mut [u32; 4], data: &[u32; 8]) {
     // Round 2
     macro_rules! gg {
         ($a:expr, $b:expr, $c:expr, $d:expr, $x:expr, $s:expr) => {
-            $a = $a.wrapping_add(g($b, $c, $d)).wrapping_add($x).wrapping_add(0x5A827999);
+            $a = $a
+                .wrapping_add(g($b, $c, $d))
+                .wrapping_add($x)
+                .wrapping_add(0x5A827999);
             $a = rotate_left($a, $s);
         };
     }
@@ -97,7 +100,10 @@ fn ext2_half_md4(hash: &mut [u32; 4], data: &[u32; 8]) {
     // Round 3
     macro_rules! hh {
         ($a:expr, $b:expr, $c:expr, $d:expr, $x:expr, $s:expr) => {
-            $a = $a.wrapping_add(h($b, $c, $d)).wrapping_add($x).wrapping_add(0x6ED9EBA1);
+            $a = $a
+                .wrapping_add(h($b, $c, $d))
+                .wrapping_add($x)
+                .wrapping_add(0x6ED9EBA1);
             $a = rotate_left($a, $s);
         };
     }
@@ -120,24 +126,24 @@ fn ext2_half_md4(hash: &mut [u32; 4], data: &[u32; 8]) {
 /// TEA (Tiny Encryption Algorithm) transformation
 fn ext2_tea(hash: &mut [u32; 4], data: &[u32; 8]) {
     const TEA_DELTA: u32 = 0x9E3779B9;
-    
+
     let mut x = hash[0];
     let mut y = hash[1];
-    
+
     for i in 1..=16 {
         let sum = (i as u32).wrapping_mul(TEA_DELTA);
         x = x.wrapping_add(
             ((y << 4).wrapping_add(data[0]))
                 ^ (y.wrapping_add(sum))
-                ^ ((y >> 5).wrapping_add(data[1]))
+                ^ ((y >> 5).wrapping_add(data[1])),
         );
         y = y.wrapping_add(
             ((x << 4).wrapping_add(data[2]))
                 ^ (x.wrapping_add(sum))
-                ^ ((x >> 5).wrapping_add(data[3]))
+                ^ ((x >> 5).wrapping_add(data[3])),
         );
     }
-    
+
     hash[0] = hash[0].wrapping_add(x);
     hash[1] = hash[1].wrapping_add(y);
 }
@@ -147,25 +153,25 @@ fn ext2_legacy_hash(name: &[u8], unsigned_char: bool) -> u32 {
     let mut h1: u32 = 0x12A3FE2D;
     let mut h2: u32 = 0x37ABE8F9;
     const MULTI: u32 = 0x6D22F5;
-    
+
     for &byte in name {
         let val = if unsigned_char {
             byte as u32
         } else {
             (byte as i8) as i32 as u32
         };
-        
+
         let h0 = h2.wrapping_add(h1 ^ val.wrapping_mul(MULTI));
         let h0 = if h0 & 0x80000000 != 0 {
             h0.wrapping_sub(0x7FFFFFFF)
         } else {
             h0
         };
-        
+
         h2 = h1;
         h1 = h0;
     }
-    
+
     h1 << 1
 }
 
@@ -174,24 +180,24 @@ fn ext2_prep_hashbuf(src: &[u8], dst: &mut [u32; 8], unsigned_char: bool) {
     let slen = src.len() as u32;
     let padding = slen | (slen << 8) | (slen << 16) | (slen << 24);
     let dlen = dst.len() * 4; // 8 * 4 = 32 bytes
-    
+
     let len = slen.min(dlen as u32) as usize;
     let mut buf_val = padding;
     let mut dst_idx = 0;
-    
+
     for i in 0..len {
         let buf_byte = if unsigned_char {
             src[i] as u32
         } else {
             (src[i] as i8) as i32 as u32
         };
-        
+
         if i % 4 == 0 {
             buf_val = padding;
         }
-        
+
         buf_val = (buf_val << 8) | buf_byte;
-        
+
         if i % 4 == 3 {
             if dst_idx < dst.len() {
                 dst[dst_idx] = buf_val;
@@ -200,7 +206,7 @@ fn ext2_prep_hashbuf(src: &[u8], dst: &mut [u32; 8], unsigned_char: bool) {
             buf_val = padding;
         }
     }
-    
+
     // 处理剩余数据
     if len % 4 != 0 && dst_idx < dst.len() {
         // 需要补充填充
@@ -212,7 +218,7 @@ fn ext2_prep_hashbuf(src: &[u8], dst: &mut [u32; 8], unsigned_char: bool) {
         dst[dst_idx] = buf_val;
         dst_idx += 1;
     }
-    
+
     // 填充剩余的 dst
     while dst_idx < dst.len() {
         dst[dst_idx] = padding;
@@ -238,28 +244,28 @@ pub fn ext2_htree_hash(
     hash_minor: Option<&mut u32>,
 ) -> Result<u32, i32> {
     let len = name.len();
-    
+
     // Validate inputs
-    if len < 1 || len > 255 {
+    if !(1..=255).contains(&len) {
         if let Some(minor) = hash_minor {
             *minor = 0;
         }
         return Err(ENOTSUP);
     }
-    
+
     // Initialize hash state with MD4 IV
     let mut hash = [0x67452301u32, 0xEFCDAB89, 0x98BADCFE, 0x10325476];
-    
+
     // Apply seed if provided
     if let Some(seed) = hash_seed {
         hash.copy_from_slice(seed);
     }
-    
+
     let (major, minor) = match hash_version {
         EXT2_HTREE_TEA_UNSIGNED | EXT2_HTREE_TEA => {
             let unsigned_char = hash_version == EXT2_HTREE_TEA_UNSIGNED;
             let mut offset = 0;
-            
+
             while offset < len {
                 let mut data = [0u32; 8];
                 let chunk = &name[offset..];
@@ -267,20 +273,20 @@ pub fn ext2_htree_hash(
                 ext2_tea(&mut hash, &data);
                 offset += 16;
             }
-            
+
             (hash[0], hash[1])
         }
-        
+
         EXT2_HTREE_LEGACY_UNSIGNED | EXT2_HTREE_LEGACY => {
             let unsigned_char = hash_version == EXT2_HTREE_LEGACY_UNSIGNED;
             let major = ext2_legacy_hash(name, unsigned_char);
             (major, 0)
         }
-        
+
         EXT2_HTREE_HALF_MD4_UNSIGNED | EXT2_HTREE_HALF_MD4 => {
             let unsigned_char = hash_version == EXT2_HTREE_HALF_MD4_UNSIGNED;
             let mut offset = 0;
-            
+
             while offset < len {
                 let mut data = [0u32; 8];
                 let chunk = &name[offset..];
@@ -288,10 +294,10 @@ pub fn ext2_htree_hash(
                 ext2_half_md4(&mut hash, &data);
                 offset += 32;
             }
-            
+
             (hash[1], hash[2])
         }
-        
+
         _ => {
             if let Some(minor) = hash_minor {
                 *minor = 0;
@@ -299,17 +305,17 @@ pub fn ext2_htree_hash(
             return Err(ENOTSUP);
         }
     };
-    
+
     // Clear lowest bit and handle EOF case
     let mut major = major & !1;
     if major == (EXT2_HTREE_EOF << 1) {
         major = (EXT2_HTREE_EOF - 1) << 1;
     }
-    
+
     if let Some(minor_out) = hash_minor {
         *minor_out = minor;
     }
-    
+
     Ok(major)
 }
 
@@ -334,7 +340,7 @@ mod tests {
         let result = ext2_htree_hash(b"", None, EXT2_HTREE_TEA, None);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), ENOTSUP);
-        
+
         // 名称过长 (> 255)
         let long_name = [b'a'; 256];
         let result = ext2_htree_hash(&long_name, None, EXT2_HTREE_TEA, None);
@@ -358,7 +364,7 @@ mod tests {
             b"a",
             b"test_file_name",
         ];
-        
+
         let versions = [
             EXT2_HTREE_LEGACY,
             EXT2_HTREE_HALF_MD4,
@@ -367,14 +373,18 @@ mod tests {
             EXT2_HTREE_HALF_MD4_UNSIGNED,
             EXT2_HTREE_TEA_UNSIGNED,
         ];
-        
+
         for name in &test_names {
             for &version in &versions {
                 let hash1 = ext2_htree_hash(name, None, version, None).unwrap();
                 let hash2 = ext2_htree_hash(name, None, version, None).unwrap();
-                assert_eq!(hash1, hash2, 
-                    "Hash should be consistent for name {:?} with version {}", 
-                    core::str::from_utf8(name), version);
+                assert_eq!(
+                    hash1,
+                    hash2,
+                    "Hash should be consistent for name {:?} with version {}",
+                    core::str::from_utf8(name),
+                    version
+                );
             }
         }
     }
@@ -382,12 +392,12 @@ mod tests {
     #[test]
     fn test_hash_different_names() {
         let names = [b"test" as &[u8], b"test2", b"different"];
-        
+
         for &version in &[EXT2_HTREE_TEA, EXT2_HTREE_HALF_MD4] {
             let hash1 = ext2_htree_hash(names[0], None, version, None).unwrap();
             let hash2 = ext2_htree_hash(names[1], None, version, None).unwrap();
             let hash3 = ext2_htree_hash(names[2], None, version, None).unwrap();
-            
+
             assert_ne!(hash1, hash2);
             assert_ne!(hash1, hash3);
             assert_ne!(hash2, hash3);
@@ -399,11 +409,11 @@ mod tests {
         let name = b"test_file";
         let seed1 = [0x12345678u32, 0xABCDEF00, 0x11111111, 0x22222222];
         let seed2 = [0x87654321u32, 0x00FEDCBA, 0x33333333, 0x44444444];
-        
+
         let hash1 = ext2_htree_hash(name, Some(&seed1), EXT2_HTREE_TEA, None).unwrap();
         let hash2 = ext2_htree_hash(name, Some(&seed2), EXT2_HTREE_TEA, None).unwrap();
         let hash3 = ext2_htree_hash(name, None, EXT2_HTREE_TEA, None).unwrap();
-        
+
         // 不同的 seed 应该产生不同的 hash
         assert_ne!(hash1, hash2);
         assert_ne!(hash1, hash3);
@@ -414,9 +424,9 @@ mod tests {
     fn test_hash_minor_output() {
         let name = b"test_file";
         let mut minor = 0u32;
-        
+
         let major = ext2_htree_hash(name, None, EXT2_HTREE_TEA, Some(&mut minor)).unwrap();
-        
+
         // 确保major和minor都有值
         assert_ne!(major, 0);
         // minor 可能为 0，但应该被设置
@@ -425,7 +435,7 @@ mod tests {
     #[test]
     fn test_hash_lowest_bit_cleared() {
         let name = b"test";
-        
+
         for &version in &[EXT2_HTREE_TEA, EXT2_HTREE_HALF_MD4, EXT2_HTREE_LEGACY] {
             let hash = ext2_htree_hash(name, None, version, None).unwrap();
             // 最低位应该被清除
@@ -436,11 +446,11 @@ mod tests {
     #[test]
     fn test_signed_vs_unsigned() {
         let name = b"\x80\xFF\x7F\x01"; // 包含高位字节
-        
+
         // 签名和无符号版本应该产生不同的结果
         let hash_signed = ext2_htree_hash(name, None, EXT2_HTREE_TEA, None).unwrap();
         let hash_unsigned = ext2_htree_hash(name, None, EXT2_HTREE_TEA_UNSIGNED, None).unwrap();
-        
+
         assert_ne!(hash_signed, hash_unsigned);
     }
 
@@ -448,7 +458,7 @@ mod tests {
     fn test_long_name() {
         // 测试接近最大长度的名称
         let name = [b'a'; 255];
-        
+
         for &version in &[EXT2_HTREE_TEA, EXT2_HTREE_HALF_MD4, EXT2_HTREE_LEGACY] {
             let result = ext2_htree_hash(&name, None, version, None);
             assert!(result.is_ok(), "Should handle max length name");
@@ -458,7 +468,7 @@ mod tests {
     #[test]
     fn test_all_hash_algorithms() {
         let name = b"test_all_algorithms";
-        
+
         let versions = [
             ("LEGACY", EXT2_HTREE_LEGACY),
             ("HALF_MD4", EXT2_HTREE_HALF_MD4),
@@ -467,7 +477,7 @@ mod tests {
             ("HALF_MD4_UNSIGNED", EXT2_HTREE_HALF_MD4_UNSIGNED),
             ("TEA_UNSIGNED", EXT2_HTREE_TEA_UNSIGNED),
         ];
-        
+
         for (desc, version) in &versions {
             let result = ext2_htree_hash(name, None, *version, None);
             assert!(result.is_ok(), "Algorithm {} should work", desc);

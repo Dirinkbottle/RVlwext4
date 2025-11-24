@@ -1,13 +1,10 @@
-/*
-    EXT4_MISC module
-*/
-
+// EXT4_MISC module
 
 /// 向上取整除法
 /// 例如: div_round_up(10, 3) = 4
 #[inline(always)]
 pub const fn div_round_up(x: usize, y: usize) -> usize {
-    (x + y - 1) / y
+    x.div_ceil(y)
 }
 
 /// 将 x 对齐到 y 的倍数
@@ -31,7 +28,6 @@ macro_rules! EXT4_ALIGN {
         ($y) * $crate::EXT4_DIV_ROUND_UP!($x, $y)
     };
 }
-
 
 /// 64位字节序反转
 #[inline(always)]
@@ -57,7 +53,6 @@ pub const fn reorder32(n: u32) -> u32 {
 pub const fn reorder16(n: u16) -> u16 {
     ((n & 0xff) << 8) | ((n & 0xff00) >> 8)
 }
-
 
 #[cfg(target_endian = "big")]
 mod endian {
@@ -121,21 +116,31 @@ mod endian {
     }
 }
 
+#[inline(always)]
+pub fn to_le16(n: u16) -> u16 {
+    n.to_le()
+}
+#[inline(always)]
+pub fn to_le32(n: u32) -> u32 {
+    n.to_le()
+}
+#[inline(always)]
+pub fn to_le64(n: u64) -> u64 {
+    n.to_le()
+}
 
 #[inline(always)]
-pub fn to_le16(n: u16) -> u16 { n.to_le() }
+pub fn to_be16(n: u16) -> u16 {
+    n.to_be()
+}
 #[inline(always)]
-pub fn to_le32(n: u32) -> u32 { n.to_le() }
+pub fn to_be32(n: u32) -> u32 {
+    n.to_be()
+}
 #[inline(always)]
-pub fn to_le64(n: u64) -> u64 { n.to_le() }
-
-#[inline(always)]
-pub fn to_be16(n: u16) -> u16 { n.to_be() }
-#[inline(always)]
-pub fn to_be32(n: u32) -> u32 { n.to_be() }
-#[inline(always)]
-pub fn to_be64(n: u64) -> u64 { n.to_be() }
-
+pub fn to_be64(n: u64) -> u64 {
+    n.to_be()
+}
 
 /// 从 EXT4 结构体读取 32 位字段（小端）
 #[macro_export]
@@ -233,21 +238,21 @@ macro_rules! jbd_set8 {
     };
 }
 
-///获取结构体字段偏移量
+/// 获取结构体字段偏移量 获取到field的偏移量，不包含field
 #[macro_export]
 macro_rules! offsetof {
-     ($type:ty, $field:ident) => {{
+    ($type:ty, $field:ident) => {{
         let dummy = core::mem::MaybeUninit::<$type>::uninit();
         let dummy_ptr = dummy.as_ptr();
         let field_ptr = unsafe { core::ptr::addr_of!((*dummy_ptr).$field) };
         (field_ptr as usize) - (dummy_ptr as usize)
-     }};
+    }};
 }
 
 #[cfg(test)]
-mod tests{
+mod tests {
     use super::*;
-     #[test]
+    #[test]
     fn test_div_round_up() {
         assert_eq!(div_round_up(10, 3), 4);
         assert_eq!(div_round_up(9, 3), 3);
@@ -335,5 +340,4 @@ mod tests{
         assert_eq!(offsetof!(TestStruct, b), 4);
         assert_eq!(offsetof!(TestStruct, c), 6);
     }
-
 }

@@ -10,7 +10,8 @@ log = "0.4"
 
 
 [features]
-default = ["debug_printf", "debug_assert"]
+default = ["debug_printf", "debug_assert","CONFIG_META_CSUM_ENABLE"]
 debug_printf = []
 debug_assert = []
 own_assert = []
+CONFIG_META_CSUM_ENABLE = []

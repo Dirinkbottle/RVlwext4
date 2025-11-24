@@ -24,14 +24,14 @@ pub const EXT4_SUPERBLOCK_FLAGS_UNSIGNED_HASH: u32 = 0x0002;
 pub const EXT4_SUPERBLOCK_FLAGS_TEST_FILESYS: u32 = 0x0004;
 
 // 文件系统状态
-pub const EXT4_SUPERBLOCK_STATE_VALID_FS: u16 = 0x0001;  // 正常卸载
-pub const EXT4_SUPERBLOCK_STATE_ERROR_FS: u16 = 0x0002;  // 检测到错误
+pub const EXT4_SUPERBLOCK_STATE_VALID_FS: u16 = 0x0001; // 正常卸载
+pub const EXT4_SUPERBLOCK_STATE_ERROR_FS: u16 = 0x0002; // 检测到错误
 pub const EXT4_SUPERBLOCK_STATE_ORPHAN_FS: u16 = 0x0004; // 正在恢复孤儿文件
 
 // 错误处理行为
 pub const EXT4_SUPERBLOCK_ERRORS_CONTINUE: u16 = 1; // 继续执行
-pub const EXT4_SUPERBLOCK_ERRORS_RO: u16 = 2;       // 重新挂载为只读
-pub const EXT4_SUPERBLOCK_ERRORS_PANIC: u16 = 3;    // 内核恐慌
+pub const EXT4_SUPERBLOCK_ERRORS_RO: u16 = 2; // 重新挂载为只读
+pub const EXT4_SUPERBLOCK_ERRORS_PANIC: u16 = 3; // 内核恐慌
 
 // 兼容特性
 pub const EXT4_FCOM_DIR_PREALLOC: u32 = 0x0001;
@@ -154,6 +154,7 @@ pub const EXT4_GOOD_OLD_INODE_SIZE: usize = 128;
 
 // CRC32
 pub const EXT4_CRC32_INIT: u32 = 0xFFFFFFFF;
+pub const EXT4_CHECKSUM_CRC32C: u8 = 1;
 
 // JBD
 pub const JBD_MAGIC_NUMBER: u32 = 0xc03b3998;
@@ -270,7 +271,7 @@ pub struct ext4_sblock {
     pub encrypt_algos: [u8; 4],
     pub encrypt_pw_salt: [u8; 16],
     pub lpf_ino: u32,
-    pub padding: [u32; 100],  
+    pub padding: [u32; 100],
     pub checksum: u32,
 }
 
@@ -352,14 +353,14 @@ pub struct ext4_inode {
     pub blocks_count_lo: u32,
     pub flags: u32,
     pub unused_osd1: u32,
-    pub blocks: [u32; EXT4_INODE_BLOCKS],  // 15个块指针
+    pub blocks: [u32; EXT4_INODE_BLOCKS], // 15个块指针
     pub generation: u32,
     pub file_acl_lo: u32,
     pub size_hi: u32,
     pub obso_faddr: u32,
-    
+
     pub osd2: ext4_inode_osd2,
-    
+
     pub extra_isize: u16,
     pub checksum_hi: u16,
     pub ctime_extra: u32,
@@ -489,42 +490,31 @@ pub struct ext4_dir_entry_tail {
 // ============================================================================
 #[cfg(test)]
 mod tests {
+    use core::mem::{align_of, size_of};
+
     use super::*;
-    use core::mem::{size_of, align_of};
 
     #[test]
     fn test_superblock_size() {
-        assert_eq!(
-            size_of::<ext4_sblock>(), 
-            1024, 
-            "超级块大小必须是 1024 字节"
-        );
+        assert_eq!(size_of::<ext4_sblock>(), 1024, "超级块大小必须是 1024 字节");
     }
 
     #[test]
     fn test_bgroup_size() {
-        assert_eq!(
-            size_of::<ext4_bgroup>(), 
-            64, 
-            "块组描述符大小必须是 64 字节"
-        );
+        assert_eq!(size_of::<ext4_bgroup>(), 64, "块组描述符大小必须是 64 字节");
     }
 
     #[test]
     fn test_inode_size() {
         let size = size_of::<ext4_inode>();
-        
+
         // EXT4 Inode 的标准大小：
         // - 128 字节：EXT2 兼容（仅到 osd2）
         // - 156 字节：EXT4 扩展（包含额外时间戳等）
         // - 160 字节：某些实现会填充到 160
         // - 256 字节：某些实现使用更大的 Inode
-        
-        assert_eq!(
-            size, 
-            156,
-            "EXT4 扩展 Inode 大小应该是 156 字节"
-        );
+
+        assert_eq!(size, 156, "EXT4 扩展 Inode 大小应该是 156 字节");
     }
 
     #[test]
@@ -534,24 +524,23 @@ mod tests {
         assert_eq!(align_of::<ext4_bgroup>(), 1);
         assert_eq!(align_of::<ext4_inode>(), 1);
     }
-    
+
     #[test]
     fn test_inode_field_offsets() {
         // 验证关键字段的偏移量
-        use core::mem::offset_of;        
+        use core::mem::offset_of;
         assert_eq!(offset_of!(ext4_inode, mode), 0);
         assert_eq!(offset_of!(ext4_inode, blocks), 40);
         assert_eq!(offset_of!(ext4_inode, generation), 100);
         assert_eq!(offset_of!(ext4_inode, osd2), 116);
         assert_eq!(offset_of!(ext4_inode, extra_isize), 128);
-        
     }
-    
+
     #[test]
     fn test_dir_entry_sizes() {
         // 目录项最小大小（不含 name）
         assert_eq!(size_of::<ext4_fake_dir_entry>(), 8);
-        
+
         // HTree 结构
         assert_eq!(size_of::<ext4_dir_idx_climit>(), 4);
         assert_eq!(size_of::<ext4_dir_idx_dot_en>(), 12);

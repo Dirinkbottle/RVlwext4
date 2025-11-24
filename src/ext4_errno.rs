@@ -114,11 +114,7 @@ pub const fn is_error(errno: i32) -> bool {
 /// Convert errno to Result
 #[inline]
 pub fn errno_to_result(errno: i32) -> Ext4Result<()> {
-    if errno == EOK {
-        Ok(())
-    } else {
-        Err(errno)
-    }
+    if errno == EOK { Ok(()) } else { Err(errno) }
 }
 
 /// Convert Result to errno
@@ -152,11 +148,10 @@ mod tests {
     fn test_error_codes_unique() {
         // 确保错误码唯一（除了可能的别名）
         let codes = [
-            EOK, EPERM, ENOENT, EIO, ENXIO, E2BIG, ENOMEM, EACCES,
-            EFAULT, EEXIST, ENODEV, ENOTDIR, EISDIR, EINVAL, EFBIG,
-            ENOSPC, EROFS, EMLINK, ERANGE, ENOTEMPTY, ENODATA, ENOTSUP,
+            EOK, EPERM, ENOENT, EIO, ENXIO, E2BIG, ENOMEM, EACCES, EFAULT, EEXIST, ENODEV, ENOTDIR,
+            EISDIR, EINVAL, EFBIG, ENOSPC, EROFS, EMLINK, ERANGE, ENOTEMPTY, ENODATA, ENOTSUP,
         ];
-        
+
         // EOK 应该是 0，其他都应该非零
         assert_eq!(codes[0], 0);
         for &code in &codes[1..] {
@@ -201,7 +196,7 @@ mod tests {
     fn test_result_to_errno() {
         let ok_result: Ext4Result<()> = Ok(());
         assert_eq!(result_to_errno(&ok_result), EOK);
-        
+
         let err_result: Ext4Result<()> = Err(EINVAL);
         assert_eq!(result_to_errno(&err_result), EINVAL);
     }
@@ -209,11 +204,7 @@ mod tests {
     #[test]
     fn test_result_type() {
         fn test_function(should_fail: bool) -> Ext4Result<u32> {
-            if should_fail {
-                Err(EINVAL)
-            } else {
-                Ok(42)
-            }
+            if should_fail { Err(EINVAL) } else { Ok(42) }
         }
 
         let result = test_function(false);
@@ -229,7 +220,10 @@ mod tests {
     fn test_common_error_scenarios() {
         // 文件不存在
         let result: Ext4Result<()> = Err(ENOENT);
-        assert_eq!(errno_to_str(result.unwrap_err()), "No such file or directory");
+        assert_eq!(
+            errno_to_str(result.unwrap_err()),
+            "No such file or directory"
+        );
 
         // 权限拒绝
         let result: Ext4Result<()> = Err(EACCES);
