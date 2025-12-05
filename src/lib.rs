@@ -1,18 +1,23 @@
-// 整个项目默认使用小端序函数tole32 小端序不变，大端序反转
-// 单元测试是生命线
-// RVlwext4 lib file
-#![no_std]
-extern crate alloc;
+#![ no_std]
 
-//mod ext4_balloc;
-mod ext4_bitmap;
-mod ext4_block_group;
-mod ext4_blockdev;
-mod ext4_crc32;
-mod ext4_debug;
-mod ext4_errno;
-mod ext4_hash;
-mod ext4_inode;
-mod ext4_misc;
-mod ext4_super;
-mod ext4_types;
+extern crate alloc;
+pub mod config;
+pub mod endian;
+mod blockdev;
+mod mkd;
+mod disknode;
+mod superblock;
+mod entries;
+mod bitmap;
+mod bitmap_cache;
+mod inodetable_cache;
+mod datablock_cache;
+mod blockgroup_description;
+pub mod ext4;
+mod loopfile;
+mod debug;
+mod tool;
+mod bmalloc;
+
+pub use crate::blockdev::*;
+pub use crate::config::*;

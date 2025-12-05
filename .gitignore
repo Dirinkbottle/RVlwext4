@@ -1,2 +1,4 @@
 target/
 lwext4/
+*.img
+.vscode/
