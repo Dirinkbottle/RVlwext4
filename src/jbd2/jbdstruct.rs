@@ -1,12 +1,13 @@
 /// 注意，jbd2 全是大端序（on-disk values are big-endian）
 
-pub const JOURNAL_FILE_INODE: u64 = 8; /// 根据 ext4 标准，journal 的 inode 为 8
+pub const JOURNAL_FILE_INODE: u64 = 8;
+/// 根据 ext4 标准，journal 的 inode 为 8
 pub const JBD2_MAGIC: u32 = 0xC03B_3998u32; // jbd2 magic number (on-disk big-endian)
-pub const JOURNAL_BLOCK_COUNT:u32 = 32*1024*1024 /BLOCK_SIZE_U32;
-pub const JOURANL_ESCAPE :u16 = 0x1;
-pub const JBD2_FLAG_LAST_TAG:u16 = 0x8;
-use alloc::vec::{ Vec};
+pub const JOURNAL_BLOCK_COUNT: u32 = 32 * 1024 * 1024 / BLOCK_SIZE_U32;
+pub const JOURANL_ESCAPE: u16 = 0x1;
+pub const JBD2_FLAG_LAST_TAG: u16 = 0x8;
 use alloc::vec;
+use alloc::vec::Vec;
 use log::{error, trace};
 
 use crate::{BLOCK_SIZE, BLOCK_SIZE_U32, BlockDevice, endian::DiskFormat};
@@ -14,33 +15,38 @@ use core::convert::TryInto;
 
 #[repr(C)]
 ///（主物理块号，元数据内容）
-pub struct JBD2_UPDATE<'a>(pub u64,pub &'a[u8]);
+pub struct JBD2_UPDATE<'a>(pub u64, pub &'a [u8]);
 
 #[repr(C)]
-pub struct JBD2DEVSYSTEM{
-    pub jbd2_super_block:journal_superblock_s,
-    pub start_block:u32,// 日志区在磁盘的物理起始块号
-    pub max_len:u32,// 日志总块数
-    pub head:u32,//当前日志写指针(块)(相对于 start_block 的偏移)
-    pub sequence:u32, //下一个事务ID
+pub struct JBD2DEVSYSTEM {
+    pub jbd2_super_block: journal_superblock_s,
+    pub start_block: u32, // 日志区在磁盘的物理起始块号
+    pub max_len: u32,     // 日志总块数
+    pub head: u32,        //当前日志写指针(块)(相对于 start_block 的偏移)
+    pub sequence: u32,    //下一个事务ID
 }
 
 impl JBD2DEVSYSTEM {
     ///计算下一个日志块的位置(处理回绕),返回当前的（可以直接用，直接写，已经处理过偏移）!
-    pub fn set_next_log_block(&mut self)->u32{
-        let mut next=self.head+1;
-        if next >=self.max_len{
-            next=1;//跳过0
+    pub fn set_next_log_block(&mut self) -> u32 {
+        let mut next = self.head + 1;
+        if next >= self.max_len {
+            next = 1; //跳过0
         }
-        self.head=next;
-        next+self.start_block
+        self.head = next;
+        next + self.start_block
     }
     ///提交事务
     /// 允许使用原始块设备!
     /// update:Vec<JBD2_UPDATE>
-    pub fn commit_transaction<B:BlockDevice>(&mut self,block_dev:&mut B,updates:Vec<JBD2_UPDATE>)->Result<bool,()>{
+    pub fn commit_transaction<B: BlockDevice>(
+        &mut self,
+        block_dev: &mut B,
+        updates: Vec<JBD2_UPDATE>,
+    ) -> Result<bool, ()> {
         let tid = self.sequence; //事务id
-        trace!("[JBD2 commit] begin: tid={} updates_len={} head={} start_block={} max_len={} seq_in_superblock={} s_start={}",
+        trace!(
+            "[JBD2 commit] begin: tid={} updates_len={} head={} start_block={} max_len={} seq_in_superblock={} s_start={}",
             tid,
             updates.len(),
             self.head,
@@ -50,104 +56,107 @@ impl JBD2DEVSYSTEM {
             self.jbd2_super_block.s_start,
         );
 
-        let mut desc_buffer = vec![0;BLOCK_SIZE];
+        let mut desc_buffer = vec![0; BLOCK_SIZE];
 
         //写header->内存缓存
         let mut new_jbd_header = journal_header_s::default();
-        new_jbd_header.h_blocktype=1;//Descriptor
-        new_jbd_header.h_sequence=tid;//设置事务id
+        new_jbd_header.h_blocktype = 1; //Descriptor
+        new_jbd_header.h_sequence = tid; //设置事务id
         new_jbd_header.to_disk_bytes(&mut desc_buffer[0..journal_header_s::disk_size()]);
-        
-        let mut current_offset = 12;//跳过头
+
+        let mut current_offset = 12; //跳过头
         //写many tag，目前开发测试简化为一个descriptor块能塞下:)
-        for (idx,update) in updates.iter().enumerate(){
+        for (idx, update) in updates.iter().enumerate() {
             //检查逃逸escape 如果数据块开头也是jbd2_magic 要标志逃逸
-            let mut tag = journal_block_tag_s{
-                t_blocknr:update.0 as u32,
-                t_checksum:0, 
-                t_flags:0, //后面记得处理逃逸
+            let mut tag = journal_block_tag_s {
+                t_blocknr: update.0 as u32,
+                t_checksum: 0,
+                t_flags: 0, //后面记得处理逃逸
             };
-            let mut magic:u32 = u32::from_le_bytes(update.1[0..4].try_into().unwrap());
-            if magic ==JBD2_MAGIC{
-                tag.t_flags |=JOURANL_ESCAPE;
+            let mut magic: u32 = u32::from_le_bytes(update.1[0..4].try_into().unwrap());
+            if magic == JBD2_MAGIC {
+                tag.t_flags |= JOURANL_ESCAPE;
                 error!("JOURNAL ERROR ,Updates data escape!!!");
             }
 
-
             //最后一个
-            if idx == updates.len()-1 {
-                tag.t_flags |=JBD2_FLAG_LAST_TAG;
+            if idx == updates.len() - 1 {
+                tag.t_flags |= JBD2_FLAG_LAST_TAG;
             }
-            trace!("[JBD2 commit] tid={} tag_idx={} t_blocknr={} t_flags=0x{:x}",
-                tid,
-                idx,
-                tag.t_blocknr,
-                tag.t_flags,
+            trace!(
+                "[JBD2 commit] tid={} tag_idx={} t_blocknr={} t_flags=0x{:x}",
+                tid, idx, tag.t_blocknr, tag.t_flags,
             );
-            tag.to_disk_bytes(&mut desc_buffer[current_offset..current_offset+8]);
-            current_offset+=8;
+            tag.to_disk_bytes(&mut desc_buffer[current_offset..current_offset + 8]);
+            current_offset += 8;
         }
-        
+
         //实际写入盘 这里可以直接写
         let block_id = self.set_next_log_block();
-        trace!("[JBD2 commit] tid={} descriptor_block_id={} (absolute)", tid, block_id);
+        trace!(
+            "[JBD2 commit] tid={} descriptor_block_id={} (absolute)",
+            tid, block_id
+        );
         block_dev.write(&desc_buffer, block_id, 1);
-
-
 
         //写实际的metadata CORE!!!!!
         for (idx, update) in updates.into_iter().enumerate() {
             let metadata_journal_block_id = self.set_next_log_block();
-            trace!("[JBD2 commit] tid={} meta_idx={} journal_block_id={} (absolute) target_phys_block={}", 
-                tid,
-                idx,
-                metadata_journal_block_id,
-                update.0
+            trace!(
+                "[JBD2 commit] tid={} meta_idx={} journal_block_id={} (absolute) target_phys_block={}",
+                tid, idx, metadata_journal_block_id, update.0
             );
 
-             //逃逸处理
-            let mut check_data:[u8;BLOCK_SIZE]=[0;BLOCK_SIZE];
+            //逃逸处理
+            let mut check_data: [u8; BLOCK_SIZE] = [0; BLOCK_SIZE];
             check_data.copy_from_slice(update.1);
             let magic = u32::from_le_bytes(check_data[0..4].try_into().unwrap());
-            if magic == JBD2_MAGIC{
+            if magic == JBD2_MAGIC {
                 error!("Find excape data,will fill 0");
                 check_data[0..4].fill(0);
             }
-           
 
-
-            block_dev.write(&check_data, metadata_journal_block_id,1);
+            block_dev.write(&check_data, metadata_journal_block_id, 1);
         }
         block_dev.flush();
 
         //写入Commit Block
-        
-        let mut commit_buffer=[0_u8;BLOCK_SIZE];
-        
-        let commit_block = commit_header{
+
+        let mut commit_buffer = [0_u8; BLOCK_SIZE];
+
+        let commit_block = commit_header {
             //commit block type 2
-            h_header:journal_header_s { h_magic: JBD2_MAGIC, h_blocktype: 2, h_sequence: tid },//注意完成的tid
-            h_chksum_type:0,
-            h_chksum_size:0,
-            h_padding:[0;2],
-            h_chksum:[0;8],
-            h_commit_sec:0,//提交时间
-            h_commit_nsec:0,
+            h_header: journal_header_s {
+                h_magic: JBD2_MAGIC,
+                h_blocktype: 2,
+                h_sequence: tid,
+            }, //注意完成的tid
+            h_chksum_type: 0,
+            h_chksum_size: 0,
+            h_padding: [0; 2],
+            h_chksum: [0; 8],
+            h_commit_sec: 0, //提交时间
+            h_commit_nsec: 0,
         };
 
         commit_block.to_disk_bytes(&mut commit_buffer);
         let commit_block_id = self.set_next_log_block();
-        trace!("[JBD2 commit] tid={} commit_block_id={} (absolute)", tid, commit_block_id);
-        block_dev.write(&commit_buffer,commit_block_id , 1);
+        trace!(
+            "[JBD2 commit] tid={} commit_block_id={} (absolute)",
+            tid, commit_block_id
+        );
+        block_dev.write(&commit_buffer, commit_block_id, 1);
         //至此，commit已经完成，metadata数据已经安全:）
         block_dev.flush();
-        self.sequence+=1;
-        trace!("[JBD2 commit] end: tid={} new_sequence={}", tid, self.sequence);
+        self.sequence += 1;
+        trace!(
+            "[JBD2 commit] end: tid={} new_sequence={}",
+            tid, self.sequence
+        );
 
         //注意此时head指向下一个可用的块
         Ok(true)
     }
-
 
     ///事务重放：从当前 superblock 状态开始，尽可能重放连续的完整事务
     pub fn replay<B: BlockDevice>(&mut self, block_dev: &mut B) {
@@ -162,7 +171,7 @@ impl JBD2DEVSYSTEM {
             cur_rel = self.jbd2_super_block.s_first;
         }
 
-        let first = self.jbd2_super_block.s_first;   // 相对块号
+        let first = self.jbd2_super_block.s_first; // 相对块号
         let maxlen = self.jbd2_super_block.s_maxlen; // 日志总块数
         let mut expect_seq = self.jbd2_super_block.s_sequence;
 
@@ -171,7 +180,8 @@ impl JBD2DEVSYSTEM {
             return;
         }
 
-        trace!("[JBD2 replay] begin: start_block={} first(rel)={} maxlen={} expect_seq={} cur_rel={} s_start(rel)={} s_sequence={}",
+        trace!(
+            "[JBD2 replay] begin: start_block={} first(rel)={} maxlen={} expect_seq={} cur_rel={} s_start(rel)={} s_sequence={}",
             self.start_block,
             first,
             maxlen,
@@ -186,18 +196,17 @@ impl JBD2DEVSYSTEM {
             let mut desc_buf = [0u8; BLOCK_SIZE];
             let desc_phys = self.start_block + cur_rel; // 物理块号
             if let Err(e) = block_dev.read(&mut desc_buf, desc_phys, 1) {
-                trace!("[JBD2 replay] read descriptor failed at rel_block={} phys_block={} err={:?}", cur_rel, desc_phys, e);
+                trace!(
+                    "[JBD2 replay] read descriptor failed at rel_block={} phys_block={} err={:?}",
+                    cur_rel, desc_phys, e
+                );
                 break;
             }
 
             let hdr = journal_header_s::from_disk_bytes(&desc_buf[0..12]);
-            trace!("[JBD2 replay] descriptor: rel_block={} phys_block={} h_magic=0x{:x} h_blocktype={} h_sequence={} expect_seq={}",
-                cur_rel,
-                desc_phys,
-                hdr.h_magic,
-                hdr.h_blocktype,
-                hdr.h_sequence,
-                expect_seq
+            trace!(
+                "[JBD2 replay] descriptor: rel_block={} phys_block={} h_magic=0x{:x} h_blocktype={} h_sequence={} expect_seq={}",
+                cur_rel, desc_phys, hdr.h_magic, hdr.h_blocktype, hdr.h_sequence, expect_seq
             );
             if hdr.h_magic != JBD2_MAGIC || hdr.h_blocktype != 1 {
                 // 不是合法的 descriptor，认为后面没有可重放事务
@@ -220,11 +229,9 @@ impl JBD2DEVSYSTEM {
                     break;
                 }
 
-                trace!("[JBD2 replay] tid={} tag_idx={} t_blocknr={} t_flags=0x{:x}",
-                    expect_seq,
-                    tag_idx,
-                    tag.t_blocknr,
-                    tag.t_flags
+                trace!(
+                    "[JBD2 replay] tid={} tag_idx={} t_blocknr={} t_flags=0x{:x}",
+                    expect_seq, tag_idx, tag.t_blocknr, tag.t_flags
                 );
 
                 let last = (tag.t_flags & JBD2_FLAG_LAST_TAG) != 0;
@@ -255,10 +262,16 @@ impl JBD2DEVSYSTEM {
                 let meta_phys = self.start_block + cur_rel;
                 let mut mbuf = [0u8; BLOCK_SIZE];
                 if let Err(e) = block_dev.read(&mut mbuf, meta_phys, 1) {
-                    trace!("[JBD2 replay] read meta block failed: idx={} rel_block={} phys_block={} err={:?}", idx, cur_rel, meta_phys, e);
+                    trace!(
+                        "[JBD2 replay] read meta block failed: idx={} rel_block={} phys_block={} err={:?}",
+                        idx, cur_rel, meta_phys, e
+                    );
                     return;
                 }
-                trace!("[JBD2 replay] tid={} loaded meta_idx={} from journal_rel_block={} phys_block={}", expect_seq, idx, cur_rel, meta_phys);
+                trace!(
+                    "[JBD2 replay] tid={} loaded meta_idx={} from journal_rel_block={} phys_block={}",
+                    expect_seq, idx, cur_rel, meta_phys
+                );
                 meta_blocks.push(mbuf);
             }
 
@@ -271,19 +284,19 @@ impl JBD2DEVSYSTEM {
             let commit_phys = self.start_block + cur_rel;
             let mut cbuf = [0u8; BLOCK_SIZE];
             if let Err(e) = block_dev.read(&mut cbuf, commit_phys, 1) {
-                trace!("[JBD2 replay] read commit failed at rel_block={} phys_block={} err={:?}", cur_rel, commit_phys, e);
+                trace!(
+                    "[JBD2 replay] read commit failed at rel_block={} phys_block={} err={:?}",
+                    cur_rel, commit_phys, e
+                );
                 return;
             }
             let chdr = journal_header_s::from_disk_bytes(&cbuf[0..12]);
-            trace!("[JBD2 replay] commit: rel_block={} phys_block={} h_magic=0x{:x} h_blocktype={} h_sequence={} expect_seq={}",
-                cur_rel,
-                commit_phys,
-                chdr.h_magic,
-                chdr.h_blocktype,
-                chdr.h_sequence,
-                expect_seq
+            trace!(
+                "[JBD2 replay] commit: rel_block={} phys_block={} h_magic=0x{:x} h_blocktype={} h_sequence={} expect_seq={}",
+                cur_rel, commit_phys, chdr.h_magic, chdr.h_blocktype, chdr.h_sequence, expect_seq
             );
-            if chdr.h_magic != JBD2_MAGIC || chdr.h_blocktype != 2 || chdr.h_sequence != expect_seq {
+            if chdr.h_magic != JBD2_MAGIC || chdr.h_blocktype != 2 || chdr.h_sequence != expect_seq
+            {
                 // 没有匹配的 commit，事务不完整，不再继续
                 break;
             }
@@ -294,19 +307,18 @@ impl JBD2DEVSYSTEM {
                 let data = &mut meta_blocks[i];
 
                 //检查是否逃逸
-            if (tag.t_flags & 1) != 0 { // JBD2_FLAG_ESCAPE = 1
-                let magic_bytes = JBD2_MAGIC.to_be_bytes();
-                data[0] = magic_bytes[0];
-                data[1] = magic_bytes[1];
-                data[2] = magic_bytes[2];
-                data[3] = magic_bytes[3];
-                trace!("Restored JBD2 Magic for block {}", phys);
-            }
-                trace!("[JBD2 replay] tid={} apply meta_idx={} to phys_block={} (journal data from idx={})",
-                    expect_seq,
-                    i,
-                    phys,
-                    i
+                if (tag.t_flags & 1) != 0 {
+                    // JBD2_FLAG_ESCAPE = 1
+                    let magic_bytes = JBD2_MAGIC.to_be_bytes();
+                    data[0] = magic_bytes[0];
+                    data[1] = magic_bytes[1];
+                    data[2] = magic_bytes[2];
+                    data[3] = magic_bytes[3];
+                    trace!("Restored JBD2 Magic for block {}", phys);
+                }
+                trace!(
+                    "[JBD2 replay] tid={} apply meta_idx={} to phys_block={} (journal data from idx={})",
+                    expect_seq, i, phys, i
                 );
 
                 let _ = block_dev.write(data, phys, 1);
@@ -322,10 +334,9 @@ impl JBD2DEVSYSTEM {
             if cur_rel - first >= maxlen {
                 cur_rel = first;
             }
-            trace!("[JBD2 replay] transaction applied: new_sequence={} new_s_start(rel)={} (journal rel_cur={})",
-                self.jbd2_super_block.s_sequence,
-                cur_rel,
-                cur_rel
+            trace!(
+                "[JBD2 replay] transaction applied: new_sequence={} new_s_start(rel)={} (journal rel_cur={})",
+                self.jbd2_super_block.s_sequence, cur_rel, cur_rel
             );
             self.jbd2_super_block.s_start = cur_rel;
 
@@ -336,18 +347,17 @@ impl JBD2DEVSYSTEM {
             // 约定 journal superblock 位于 start_block
             let sb_block = self.start_block;
             if sb_block != 0 {
-                trace!("[JBD2 replay] write journal superblock to block={} (sequence={} s_start={})",
-                    sb_block,
-                    self.jbd2_super_block.s_sequence,
-                    self.jbd2_super_block.s_start
+                trace!(
+                    "[JBD2 replay] write journal superblock to block={} (sequence={} s_start={})",
+                    sb_block, self.jbd2_super_block.s_sequence, self.jbd2_super_block.s_start
                 );
                 let _ = block_dev.write(&sb_buf, sb_block, BLOCK_SIZE_U32);
                 let _ = block_dev.flush();
             }
         }
-        trace!("[JBD2 replay] end: final_sequence={} final_s_start={}",
-            self.jbd2_super_block.s_sequence,
-            self.jbd2_super_block.s_start
+        trace!(
+            "[JBD2 replay] end: final_sequence={} final_s_start={}",
+            self.jbd2_super_block.s_sequence, self.jbd2_super_block.s_start
         );
     }
 }
@@ -355,14 +365,17 @@ impl JBD2DEVSYSTEM {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct journal_header_s {
-    pub h_magic: u32,      // __be32: magic number (0xC03B3998)
-    pub h_blocktype: u32,  // __be32: block type (descriptor, commit, superblock, ...)
-    pub h_sequence: u32,   // __be32: transaction sequence id
+    pub h_magic: u32,     // __be32: magic number (0xC03B3998)
+    pub h_blocktype: u32, // __be32: block type (descriptor, commit, superblock, ...)
+    pub h_sequence: u32,  // __be32: transaction sequence id
 }
 impl Default for journal_header_s {
     fn default() -> Self {
-        journal_header_s { h_magic: JBD2_MAGIC, h_blocktype: 4,
-             h_sequence: 0 }
+        journal_header_s {
+            h_magic: JBD2_MAGIC,
+            h_blocktype: 4,
+            h_sequence: 0,
+        }
     }
 }
 
@@ -371,7 +384,11 @@ impl DiskFormat for journal_header_s {
         let h_magic = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
         let h_blocktype = u32::from_be_bytes(bytes[4..8].try_into().unwrap());
         let h_sequence = u32::from_be_bytes(bytes[8..12].try_into().unwrap());
-        journal_header_s { h_magic, h_blocktype, h_sequence }
+        journal_header_s {
+            h_magic,
+            h_blocktype,
+            h_sequence,
+        }
     }
 
     fn to_disk_bytes(&self, bytes: &mut [u8]) {
@@ -388,60 +405,61 @@ pub struct journal_superblock_s {
     pub s_header: journal_header_s,
 
     // Static information describing the journal
-    pub s_blocksize: u32,       // 0xC  __be32
-    pub s_maxlen: u32,          // 0x10 __be32: total number of blocks in journal
-    pub s_first: u32,           // 0x14 __be32: first block of log information
+    pub s_blocksize: u32, // 0xC  __be32
+    pub s_maxlen: u32,    // 0x10 __be32: total number of blocks in journal
+    pub s_first: u32,     // 0x14 __be32: first block of log information
 
     // Dynamic information describing the current state of the log
-    pub s_sequence: u32,        // 0x18 __be32: first commit id expected in log
-    pub s_start: u32,           // 0x1C __be32: block number of start of log
-    pub s_errno: u32,           // 0x20 __be32: error value
+    pub s_sequence: u32, // 0x18 __be32: first commit id expected in log
+    pub s_start: u32,    // 0x1C __be32: block number of start of log
+    pub s_errno: u32,    // 0x20 __be32: error value
 
     // The remaining fields are valid in a v2 superblock
-    pub s_feature_compat: u32,      // 0x24 __be32
-    pub s_feature_incompat: u32,    // 0x28 __be32
-    pub s_feature_ro_compat: u32,   // 0x2C __be32
-    pub s_uuid: [u8; 16],           // 0x30 __u8[16]
-    pub s_nr_users: u32,            // 0x40 __be32
-    pub s_dynsuper: u32,            // 0x44 __be32
-    pub s_max_transaction: u32,     // 0x48 __be32
-    pub s_max_trans_data: u32,      // 0x4C __be32
-    pub s_checksum_type: u8,        // 0x50 __u8
-    pub s_padding2: [u8; 3],        // 0x51 padding
+    pub s_feature_compat: u32,    // 0x24 __be32
+    pub s_feature_incompat: u32,  // 0x28 __be32
+    pub s_feature_ro_compat: u32, // 0x2C __be32
+    pub s_uuid: [u8; 16],         // 0x30 __u8[16]
+    pub s_nr_users: u32,          // 0x40 __be32
+    pub s_dynsuper: u32,          // 0x44 __be32
+    pub s_max_transaction: u32,   // 0x48 __be32
+    pub s_max_trans_data: u32,    // 0x4C __be32
+    pub s_checksum_type: u8,      // 0x50 __u8
+    pub s_padding2: [u8; 3],      // 0x51 padding
 
     // padding up to 0xFC
-    pub s_padding: [u32; 42],       // 0x54..0xFC
-    pub s_checksum: u32,            // 0xFC __be32: checksum of superblock (with this zeroed)
+    pub s_padding: [u32; 42], // 0x54..0xFC
+    pub s_checksum: u32,      // 0xFC __be32: checksum of superblock (with this zeroed)
 
     // 0x100 .. 0x3FF: list of users (16 * 48 = 768 bytes)
-    pub s_users: [u8; 16 * 48],     // ids of filesystems sharing the log
+    pub s_users: [u8; 16 * 48], // ids of filesystems sharing the log
 }
-
 
 impl Default for journal_superblock_s {
     ///必须手动配置max_len（块数）,默认4096个
     fn default() -> Self {
         let header = journal_header_s::default();
-        journal_superblock_s { s_header: header, 
-            s_blocksize: BLOCK_SIZE_U32, 
-            s_maxlen: 4096, 
+        journal_superblock_s {
+            s_header: header,
+            s_blocksize: BLOCK_SIZE_U32,
+            s_maxlen: 4096,
             s_first: 1,
-             s_sequence: 1, 
-             s_start: 0, 
-             s_errno: 0,
-              s_feature_compat: 0,
-               s_feature_incompat: 0,
-                s_feature_ro_compat: 0,
-                 s_uuid: [0;16],
-                  s_nr_users: 1, 
-                  s_dynsuper: 0, 
-                  s_max_transaction: JOURNAL_BLOCK_COUNT, 
-                  s_max_trans_data: JOURNAL_BLOCK_COUNT*10, 
-                  s_checksum_type: 0, 
-                  s_padding2: [0;3], 
-                  s_padding: [0;42], 
-                  s_checksum: 0, 
-                  s_users: [0;768] }
+            s_sequence: 1,
+            s_start: 0,
+            s_errno: 0,
+            s_feature_compat: 0,
+            s_feature_incompat: 0,
+            s_feature_ro_compat: 0,
+            s_uuid: [0; 16],
+            s_nr_users: 1,
+            s_dynsuper: 0,
+            s_max_transaction: JOURNAL_BLOCK_COUNT,
+            s_max_trans_data: JOURNAL_BLOCK_COUNT * 10,
+            s_checksum_type: 0,
+            s_padding2: [0; 3],
+            s_padding: [0; 42],
+            s_checksum: 0,
+            s_users: [0; 768],
+        }
     }
 }
 
@@ -471,22 +489,22 @@ impl DiskFormat for journal_superblock_s {
         let s_max_trans_data = u32::from_be_bytes(bytes[76..80].try_into().unwrap());
 
         let s_checksum_type = bytes[80];
-        let mut s_padding2 = [0u8;3];
+        let mut s_padding2 = [0u8; 3];
         s_padding2.copy_from_slice(&bytes[81..84]);
 
         let mut s_padding = [0u32; 42];
         let mut off = 84usize;
         for i in 0..42 {
-            s_padding[i] = u32::from_be_bytes(bytes[off..off+4].try_into().unwrap());
+            s_padding[i] = u32::from_be_bytes(bytes[off..off + 4].try_into().unwrap());
             off += 4;
         }
 
         let s_checksum = u32::from_be_bytes(bytes[0xFC..0x100].try_into().unwrap());
 
-        let mut s_users = [0u8; 16*48];
-        s_users.copy_from_slice(&bytes[0x100..0x100 + 16*48]);
+        let mut s_users = [0u8; 16 * 48];
+        s_users.copy_from_slice(&bytes[0x100..0x100 + 16 * 48]);
 
-        journal_superblock_s{
+        journal_superblock_s {
             s_header,
             s_blocksize,
             s_maxlen,
@@ -536,12 +554,12 @@ impl DiskFormat for journal_superblock_s {
 
         let mut off = 84usize;
         for i in 0..42 {
-            bytes[off..off+4].copy_from_slice(&self.s_padding[i].to_be_bytes());
+            bytes[off..off + 4].copy_from_slice(&self.s_padding[i].to_be_bytes());
             off += 4;
         }
 
         bytes[0xFC..0x100].copy_from_slice(&self.s_checksum.to_be_bytes());
-        bytes[0x100..0x100 + 16*48].copy_from_slice(&self.s_users);
+        bytes[0x100..0x100 + 16 * 48].copy_from_slice(&self.s_users);
     }
 }
 
@@ -551,11 +569,11 @@ impl DiskFormat for journal_superblock_s {
 #[derive(Debug, Clone, Copy)]
 pub struct journal_block_tag_s {
     // Basic (v1/v2) tag layout
-    pub t_blocknr: u32,   // __be32: lower 32-bits of target block number
-    pub t_checksum: u16,  // __be16: checksum (lower 16 bits)
-    pub t_flags: u16,     // __be16: flags (escaped, same UUID, last tag, ...)
-    // Optionally followed by __be32 t_blocknr_high (when 64-bit support)
-    // and optionally a 16-byte uuid, depending on flags/features.
+    pub t_blocknr: u32,  // __be32: lower 32-bits of target block number
+    pub t_checksum: u16, // __be16: checksum (lower 16 bits)
+    pub t_flags: u16,    // __be16: flags (escaped, same UUID, last tag, ...)
+                         // Optionally followed by __be32 t_blocknr_high (when 64-bit support)
+                         // and optionally a 16-byte uuid, depending on flags/features.
 }
 
 impl DiskFormat for journal_block_tag_s {
@@ -563,7 +581,11 @@ impl DiskFormat for journal_block_tag_s {
         let t_blocknr = u32::from_be_bytes(bytes[0..4].try_into().unwrap());
         let t_checksum = u16::from_be_bytes(bytes[4..6].try_into().unwrap());
         let t_flags = u16::from_be_bytes(bytes[6..8].try_into().unwrap());
-        journal_block_tag_s { t_blocknr, t_checksum, t_flags }
+        journal_block_tag_s {
+            t_blocknr,
+            t_checksum,
+            t_flags,
+        }
     }
 
     fn to_disk_bytes(&self, bytes: &mut [u8]) {
@@ -581,7 +603,7 @@ pub struct journal_block_tag3_s {
     pub t_flags: u32,        // __be32: flags (includes LAST flag, SAME_UUID, ESCAPED)
     pub t_blocknr_high: u32, // __be32: upper 32 bits when 64-bit support present
     pub t_checksum: u32,     // __be32: full checksum
-    // Optionally followed by a uuid (16 bytes) unless SAME_UUID flag set.
+                             // Optionally followed by a uuid (16 bytes) unless SAME_UUID flag set.
 }
 
 impl DiskFormat for journal_block_tag3_s {
@@ -590,7 +612,12 @@ impl DiskFormat for journal_block_tag3_s {
         let t_flags = u32::from_be_bytes(bytes[4..8].try_into().unwrap());
         let t_blocknr_high = u32::from_be_bytes(bytes[8..12].try_into().unwrap());
         let t_checksum = u32::from_be_bytes(bytes[12..16].try_into().unwrap());
-        journal_block_tag3_s { t_blocknr, t_flags, t_blocknr_high, t_checksum }
+        journal_block_tag3_s {
+            t_blocknr,
+            t_flags,
+            t_blocknr_high,
+            t_checksum,
+        }
     }
 
     fn to_disk_bytes(&self, bytes: &mut [u8]) {
@@ -624,7 +651,7 @@ impl DiskFormat for jbd2_journal_block_tail {
 pub struct jbd2_journal_revoke_header_s {
     pub r_header: journal_header_s, // common header
     pub r_count: u32,               // __be32: number of bytes used in this block
-    // Followed by an array of block numbers (4 or 8 bytes each depending on 64-bit support)
+                                    // Followed by an array of block numbers (4 or 8 bytes each depending on 64-bit support)
 }
 
 impl DiskFormat for jbd2_journal_revoke_header_s {
@@ -677,7 +704,11 @@ mod tests {
 
     #[test]
     fn test_journal_header_roundtrip() {
-        let hdr = journal_header_s { h_magic: JBD2_MAGIC, h_blocktype: 2, h_sequence: 0x1122_3344 };
+        let hdr = journal_header_s {
+            h_magic: JBD2_MAGIC,
+            h_blocktype: 2,
+            h_sequence: 0x1122_3344,
+        };
         let mut buf = [0u8; 12];
         hdr.to_disk_bytes(&mut buf);
 
@@ -695,7 +726,11 @@ mod tests {
     #[test]
     fn test_journal_superblock_roundtrip() {
         // build a sample superblock with distinct values
-        let header = journal_header_s { h_magic: JBD2_MAGIC, h_blocktype: 3, h_sequence: 0xAABB_CCDD };
+        let header = journal_header_s {
+            h_magic: JBD2_MAGIC,
+            h_blocktype: 3,
+            h_sequence: 0xAABB_CCDD,
+        };
         let sb = journal_superblock_s {
             s_header: header,
             s_blocksize: 4096,
@@ -713,10 +748,10 @@ mod tests {
             s_max_transaction: 0,
             s_max_trans_data: 0,
             s_checksum_type: 4,
-            s_padding2: [0;3],
+            s_padding2: [0; 3],
             s_padding: [0xDEAD_BEEFu32; 42],
             s_checksum: 0xFEED_FACE,
-            s_users: [0x55u8; 16*48],
+            s_users: [0x55u8; 16 * 48],
         };
 
         let mut buf = [0u8; 1024];
@@ -744,7 +779,11 @@ mod tests {
 
     #[test]
     fn test_block_tag_and_tag3_roundtrip() {
-        let tag = journal_block_tag_s { t_blocknr: 0xDEAD_BEEFu32, t_checksum: 0xABCDu16, t_flags: 0x0001 };
+        let tag = journal_block_tag_s {
+            t_blocknr: 0xDEAD_BEEFu32,
+            t_checksum: 0xABCDu16,
+            t_flags: 0x0001,
+        };
         let mut b = [0u8; 8];
         tag.to_disk_bytes(&mut b);
         assert_eq!(&b[0..4], &tag.t_blocknr.to_be_bytes());
@@ -755,7 +794,12 @@ mod tests {
         assert_eq!(parsed.t_checksum, tag.t_checksum);
         assert_eq!(parsed.t_flags, tag.t_flags);
 
-        let tag3 = journal_block_tag3_s { t_blocknr: 1, t_flags: 2, t_blocknr_high: 3, t_checksum: 0xFEED_BEEFu32 };
+        let tag3 = journal_block_tag3_s {
+            t_blocknr: 1,
+            t_flags: 2,
+            t_blocknr_high: 3,
+            t_checksum: 0xFEED_BEEFu32,
+        };
         let mut b3 = [0u8; 16];
         tag3.to_disk_bytes(&mut b3);
         let parsed3 = journal_block_tag3_s::from_disk_bytes(&b3);
@@ -767,21 +811,32 @@ mod tests {
 
     #[test]
     fn test_block_tail_and_revoke_roundtrip() {
-        let tail = jbd2_journal_block_tail { t_checksum: 0x1234_5678 };
+        let tail = jbd2_journal_block_tail {
+            t_checksum: 0x1234_5678,
+        };
         let mut b = [0u8; 4];
         tail.to_disk_bytes(&mut b);
         assert_eq!(&b[..], &tail.t_checksum.to_be_bytes());
         let parsed = jbd2_journal_block_tail::from_disk_bytes(&b);
         assert_eq!(parsed.t_checksum, tail.t_checksum);
 
-        let revoke = jbd2_journal_revoke_header_s { r_header: journal_header_s { h_magic: JBD2_MAGIC, h_blocktype: 5, h_sequence: 7 }, r_count: 16 };
+        let revoke = jbd2_journal_revoke_header_s {
+            r_header: journal_header_s {
+                h_magic: JBD2_MAGIC,
+                h_blocktype: 5,
+                h_sequence: 7,
+            },
+            r_count: 16,
+        };
         let mut rb = [0u8; 16];
         revoke.to_disk_bytes(&mut rb);
         let parsed_revoke = jbd2_journal_revoke_header_s::from_disk_bytes(&rb);
         assert_eq!(parsed_revoke.r_header.h_magic, revoke.r_header.h_magic);
         assert_eq!(parsed_revoke.r_count, revoke.r_count);
 
-        let rt = jbd2_journal_revoke_tail { r_checksum: 0xCAFEBABE };
+        let rt = jbd2_journal_revoke_tail {
+            r_checksum: 0xCAFEBABE,
+        };
         let mut rtb = [0u8; 4];
         rt.to_disk_bytes(&mut rtb);
         let parsed_rt = jbd2_journal_revoke_tail::from_disk_bytes(&rtb);
@@ -790,12 +845,16 @@ mod tests {
 
     #[test]
     fn test_commit_header_roundtrip() {
-        let hdr = journal_header_s { h_magic: JBD2_MAGIC, h_blocktype: 2, h_sequence: 9 };
+        let hdr = journal_header_s {
+            h_magic: JBD2_MAGIC,
+            h_blocktype: 2,
+            h_sequence: 9,
+        };
         let commit = commit_header {
             h_header: hdr,
             h_chksum_type: 4,
             h_chksum_size: 4,
-            h_padding: [0u8;2],
+            h_padding: [0u8; 2],
             h_chksum: [0x1111_2222u32; 8],
             h_commit_sec: 0x0102_0304_0506_0708u64,
             h_commit_nsec: 0xAABB_CCDDu32,
@@ -818,20 +877,28 @@ impl DiskFormat for commit_header {
         let h_header = journal_header_s::from_disk_bytes(&bytes[0..12]);
         let h_chksum_type = bytes[12];
         let h_chksum_size = bytes[13];
-        let mut h_padding = [0u8;2];
+        let mut h_padding = [0u8; 2];
         h_padding.copy_from_slice(&bytes[14..16]);
 
-        let mut h_chksum = [0u32;8];
+        let mut h_chksum = [0u32; 8];
         let mut off = 16usize;
         for i in 0..8 {
-            h_chksum[i] = u32::from_be_bytes(bytes[off..off+4].try_into().unwrap());
+            h_chksum[i] = u32::from_be_bytes(bytes[off..off + 4].try_into().unwrap());
             off += 4;
         }
 
         let h_commit_sec = u64::from_be_bytes(bytes[48..56].try_into().unwrap());
         let h_commit_nsec = u32::from_be_bytes(bytes[56..60].try_into().unwrap());
 
-        commit_header { h_header, h_chksum_type, h_chksum_size, h_padding, h_chksum, h_commit_sec, h_commit_nsec }
+        commit_header {
+            h_header,
+            h_chksum_type,
+            h_chksum_size,
+            h_padding,
+            h_chksum,
+            h_commit_sec,
+            h_commit_nsec,
+        }
     }
 
     fn to_disk_bytes(&self, bytes: &mut [u8]) {
@@ -842,7 +909,7 @@ impl DiskFormat for commit_header {
 
         let mut off = 16usize;
         for i in 0..8 {
-            bytes[off..off+4].copy_from_slice(&self.h_chksum[i].to_be_bytes());
+            bytes[off..off + 4].copy_from_slice(&self.h_chksum[i].to_be_bytes());
             off += 4;
         }
 

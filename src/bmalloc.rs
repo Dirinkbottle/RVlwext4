@@ -2,7 +2,7 @@
 
 use core::cell::RefCell;
 
-use crate::bitmap::{BlockBitmapMut, InodeBitmapMut, BitmapError};
+use crate::bitmap::{BitmapError, BlockBitmapMut, InodeBitmapMut};
 use crate::blockgroup_description::Ext4GroupDesc;
 use crate::superblock::Ext4Superblock;
 
@@ -48,12 +48,9 @@ pub struct BlockAlloc {
     pub global_block: u64,
 }
 
-
-
-
 ///Bitmap Buffer
-pub struct BitmapBuffer<'a>{
-    data:BTreeMap<u32,(&'a mut [u8],&'a mut [u8])>,//group_id bitmap_data
+pub struct BitmapBuffer<'a> {
+    data: BTreeMap<u32, (&'a mut [u8], &'a mut [u8])>, //group_id bitmap_data
 }
 
 /// Inode分配结果
@@ -102,8 +99,7 @@ impl BlockAllocator {
         let mut bitmap = BlockBitmapMut::new(bitmap_data, self.blocks_per_group);
 
         // 查找第一个空闲块
-        let block_in_group = self.find_free_block(&bitmap)?
-            .ok_or(AllocError::NoSpace)?;
+        let block_in_group = self.find_free_block(&bitmap)?.ok_or(AllocError::NoSpace)?;
 
         // 分配块
         bitmap.allocate(block_in_group)?;
@@ -135,7 +131,8 @@ impl BlockAllocator {
         let mut bitmap = BlockBitmapMut::new(bitmap_data, self.blocks_per_group);
 
         // 查找连续的空闲块
-        let block_in_group = self.find_contiguous_free_blocks(&bitmap, count)?
+        let block_in_group = self
+            .find_contiguous_free_blocks(&bitmap, count)?
             .ok_or(AllocError::NoSpace)?;
 
         // 批量分配
@@ -214,9 +211,9 @@ impl BlockAllocator {
 
     /// 将块组内块号转换为全局块号
     fn block_to_global(&self, group_idx: u32, block_in_group: u32) -> u64 {
-        (group_idx as u64 * self.blocks_per_group as u64) + 
-        block_in_group as u64 + 
-        self.first_data_block as u64
+        (group_idx as u64 * self.blocks_per_group as u64)
+            + block_in_group as u64
+            + self.first_data_block as u64
     }
 }
 
@@ -254,8 +251,7 @@ impl InodeAllocator {
         let mut bitmap = InodeBitmapMut::new(bitmap_data, self.inodes_per_group);
 
         // 查找第一个空闲inode
-        let inode_in_group = self.find_free_inode(&bitmap)?
-            .ok_or(AllocError::NoSpace)?;
+        let inode_in_group = self.find_free_inode(&bitmap)?.ok_or(AllocError::NoSpace)?;
 
         // 分配inode
         bitmap.allocate(inode_in_group)?;
@@ -286,7 +282,7 @@ impl InodeAllocator {
     /// 查找第一个空闲inode
     fn find_free_inode(&self, bitmap: &InodeBitmapMut) -> Result<Option<u32>, AllocError> {
         let start_idx = if self.first_inode > 0 {
-            self.first_inode - 1  // 比如 first_ino=11 → 从 index 10 开始
+            self.first_inode - 1 // 比如 first_ino=11 → 从 index 10 开始
         } else {
             0
         };
@@ -319,13 +315,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use lazy_static::lazy_static;
 //crete global inode_alloctor and block alloctor;
-lazy_static!{
-    
-}
-
-
-
-
+lazy_static! {}
 
 #[cfg(test)]
 mod tests {
@@ -337,16 +327,16 @@ mod tests {
         let mut sb = Ext4Superblock::default();
         sb.s_blocks_per_group = 1024;
         sb.s_first_data_block = 0;
-        
+
         let allocator = BlockAllocator::new(&sb);
-        
+
         let mut bitmap_data = vec![0u8; 128]; // 1024 bits
         let mut gd = Ext4GroupDesc::default();
         gd.bg_free_blocks_count_lo = 1024;
-        
+
         let result = allocator.alloc_block_in_group(&mut bitmap_data, 0, &gd);
         assert!(result.is_ok());
-        
+
         let alloc = result.unwrap();
         assert_eq!(alloc.group_idx, 0);
         assert_eq!(alloc.block_in_group, 0);
@@ -358,14 +348,14 @@ mod tests {
         let mut sb = Ext4Superblock::default();
         sb.s_blocks_per_group = 1024;
         sb.s_first_data_block = 0;
-        
+
         let allocator = BlockAllocator::new(&sb);
-        
+
         let mut bitmap_data = vec![0u8; 128];
-        
+
         let result = allocator.alloc_contiguous_blocks(&mut bitmap_data, 0, 5);
         assert!(result.is_ok());
-        
+
         let alloc = result.unwrap();
         assert_eq!(alloc.block_in_group, 0);
     }
@@ -375,16 +365,16 @@ mod tests {
         let mut sb = Ext4Superblock::default();
         sb.s_inodes_per_group = 256;
         sb.s_first_ino = 11;
-        
+
         let allocator = InodeAllocator::new(&sb);
-        
+
         let mut bitmap_data = vec![0u8; 32]; // 256 bits
         let mut gd = Ext4GroupDesc::default();
         gd.bg_free_inodes_count_lo = 256;
-        
+
         let result = allocator.alloc_inode_in_group(&mut bitmap_data, 0, &gd);
         assert!(result.is_ok());
-        
+
         let alloc = result.unwrap();
         assert_eq!(alloc.group_idx, 0);
         assert!(alloc.inode_in_group >= 10); // 跳过保留inode
@@ -395,14 +385,14 @@ mod tests {
         let mut sb = Ext4Superblock::default();
         sb.s_inodes_per_group = 256;
         sb.s_first_ino = 11;
-        
+
         let allocator = InodeAllocator::new(&sb);
-        
+
         // 测试转换
         let (group, inode_in_group) = allocator.global_to_group(257);
         assert_eq!(group, 1);
         assert_eq!(inode_in_group, 0);
-        
+
         let global = allocator.inode_to_global(group, inode_in_group);
         assert_eq!(global, 257);
     }

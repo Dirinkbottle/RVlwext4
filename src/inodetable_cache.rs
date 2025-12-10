@@ -1,13 +1,13 @@
 //! Inode表缓存模块
-//! 
+//!
 //! 提供inode结构的缓存管理，支持延迟写回和LRU淘汰
 
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
-use crate::blockdev::{Jbd2Dev, BlockDevice, BlockDevResult, BlockDevError};
+use crate::blockdev::{BlockDevError, BlockDevResult, BlockDevice, Jbd2Dev};
+use crate::config::*;
 use crate::disknode::Ext4Inode;
 use crate::endian::DiskFormat;
-use crate::config::*;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 
 /// Inode缓存键（全局inode号）
 pub type InodeCacheKey = u64;
@@ -40,7 +40,7 @@ impl CachedInode {
             last_access: 0,
         }
     }
-    
+
     /// 标记为脏
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
@@ -84,20 +84,18 @@ impl InodeCache {
             inode_size,
         }
     }
-    
+
     /// 创建默认配置的缓存（最多32个inode，256字节大小）
     pub fn default() -> Self {
         Self::new(INODE_CACHE_MAX, INODE_SIZE as usize)
     }
 
-
-    
     /// 计算inode在磁盘上的位置
     /// * `inode_num` - inode号（从1开始）
     /// * `inodes_per_group` - 每个块组的inode数
     /// * `inode_table_start` - inode表起始块号（从块组描述符获取）
     /// * `block_size` - 块大小
-    /// 
+    ///
     /// # 返回
     /// (块号, 块内偏移, 块组索引)
     pub fn calc_inode_location(
@@ -108,20 +106,20 @@ impl InodeCache {
         block_size: usize,
     ) -> (u64, usize, u32) {
         let inode_idx = inode_num - 1;
-        
+
         let idx_in_group = inode_idx % inodes_per_group;
         let group_idx = inode_idx / inodes_per_group;
-        
+
         let byte_offset = idx_in_group as usize * self.inode_size;
-        
+
         let block_offset = byte_offset / block_size;
         let offset_in_block = byte_offset % block_size;
-        
+
         let block_num = inode_table_start + block_offset as u64;
-        
+
         (block_num, offset_in_block, group_idx)
     }
-    
+
     /// 从磁盘加载inode
     fn load_inode<B: BlockDevice>(
         &self,
@@ -132,16 +130,16 @@ impl InodeCache {
     ) -> BlockDevResult<Ext4Inode> {
         block_dev.read_block(block_num as u32)?;
         let buffer = block_dev.buffer();
-        
+
         if offset + self.inode_size > buffer.len() {
             return Err(BlockDevError::Corrupted);
         }
-        
+
         let inode = Ext4Inode::from_disk_bytes(&buffer[offset..offset + self.inode_size]);
-        
+
         Ok(inode)
     }
-    
+
     /// 获取inode（如果不存在则从磁盘加载，只读）
     /// * `block_dev` - 块设备
     /// * `inode_num` - inode号
@@ -173,10 +171,7 @@ impl InodeCache {
             cached.last_access = self.access_counter;
         }
 
-        self
-            .cache
-            .get(&inode_num)
-            .ok_or(BlockDevError::Corrupted)
+        self.cache.get(&inode_num).ok_or(BlockDevError::Corrupted)
     }
 
     /// 获取可变引用（如果不存在则从磁盘加载）
@@ -207,12 +202,12 @@ impl InodeCache {
             Err(BlockDevError::Corrupted)
         }
     }
-    
+
     /// 获取已缓存的inode（不加载）
     pub fn get(&self, inode_num: u64) -> Option<&CachedInode> {
         self.cache.get(&inode_num)
     }
-    
+
     /// 获取可变引用
     pub fn get_mut(&mut self, inode_num: u64) -> Option<&mut CachedInode> {
         if let Some(cached) = self.cache.get_mut(&inode_num) {
@@ -223,7 +218,7 @@ impl InodeCache {
             None
         }
     }
-    
+
     /// 标记inode为脏
     pub fn mark_dirty(&mut self, inode_num: u64) {
         if let Some(cached) = self.cache.get_mut(&inode_num) {
@@ -265,24 +260,22 @@ impl InodeCache {
     {
         self.modify(block_dev, handle.inode_num, block_num, offset, f)
     }
-    
+
     /// LRU淘汰
-    fn evict_lru<B: BlockDevice>(
-        &mut self,
-        block_dev: &mut Jbd2Dev<B>,
-    ) -> BlockDevResult<()> {
-        let lru_key = self.cache
+    fn evict_lru<B: BlockDevice>(&mut self, block_dev: &mut Jbd2Dev<B>) -> BlockDevResult<()> {
+        let lru_key = self
+            .cache
             .iter()
             .min_by_key(|(_, cached)| cached.last_access)
             .map(|(key, _)| *key);
-        
+
         if let Some(key) = lru_key {
             self.evict(block_dev, key)?;
         }
-        
+
         Ok(())
     }
-    
+
     /// 淘汰指定的inode
     pub fn evict<B: BlockDevice>(
         &mut self,
@@ -302,13 +295,11 @@ impl InodeCache {
         }
         Ok(())
     }
-    
+
     /// 刷新所有脏inode到磁盘
-    pub fn flush_all<B: BlockDevice>(
-        &mut self,
-        block_dev: &mut Jbd2Dev<B>,
-    ) -> BlockDevResult<()> {
-        let dirty_inodes: Vec<(u64, usize, Vec<u8>)> = self.cache
+    pub fn flush_all<B: BlockDevice>(&mut self, block_dev: &mut Jbd2Dev<B>) -> BlockDevResult<()> {
+        let dirty_inodes: Vec<(u64, usize, Vec<u8>)> = self
+            .cache
             .iter()
             .filter(|(_, cached)| cached.dirty)
             .map(|(_, cached)| {
@@ -317,18 +308,18 @@ impl InodeCache {
                 (cached.block_num, cached.offset_in_block, buffer)
             })
             .collect();
-        
+
         for (block_num, offset, data) in dirty_inodes {
             Self::write_inode_bytes_static(block_dev, block_num, offset, &data)?;
         }
-        
+
         for cached in self.cache.values_mut() {
             cached.dirty = false;
         }
-        
+
         Ok(())
     }
-    
+
     /// 刷新指定inode到磁盘
     pub fn flush<B: BlockDevice>(
         &mut self,
@@ -341,9 +332,9 @@ impl InodeCache {
                 let offset = cached.offset_in_block;
                 let mut buffer = alloc::vec![0u8; self.inode_size];
                 cached.inode.to_disk_bytes(&mut buffer);
-                
+
                 Self::write_inode_bytes_static(block_dev, block_num, offset, &buffer)?;
-                
+
                 if let Some(cached) = self.cache.get_mut(&inode_num) {
                     cached.dirty = false;
                 }
@@ -351,7 +342,7 @@ impl InodeCache {
         }
         Ok(())
     }
-    
+
     /// 写inode到磁盘
     fn write_inode_static<B: BlockDevice>(
         block_dev: &mut Jbd2Dev<B>,
@@ -364,7 +355,7 @@ impl InodeCache {
         inode.to_disk_bytes(&mut buffer);
         Self::write_inode_bytes_static(block_dev, block_num, offset, &buffer)
     }
-    
+
     /// 写inode字节到磁盘
     fn write_inode_bytes_static<B: BlockDevice>(
         block_dev: &mut Jbd2Dev<B>,
@@ -374,24 +365,22 @@ impl InodeCache {
     ) -> BlockDevResult<()> {
         block_dev.read_block(block_num as u32)?;
         let buffer = block_dev.buffer_mut();
-        
+
         buffer[offset..offset + data.len()].copy_from_slice(data);
-        
-        block_dev.write_block(block_num as u32,true)?;//只供崩溃恢复用
+
+        block_dev.write_block(block_num as u32, true)?; //只供崩溃恢复用
         Ok(())
     }
-    
+
     /// 清空缓存（不写回）
     pub fn clear(&mut self) {
         self.cache.clear();
     }
-    
+
     /// 获取缓存统计
     pub fn stats(&self) -> InodeCacheStats {
-        let dirty_count = self.cache.values()
-            .filter(|c| c.dirty)
-            .count();
-        
+        let dirty_count = self.cache.values().filter(|c| c.dirty).count();
+
         InodeCacheStats {
             total_entries: self.cache.len(),
             dirty_entries: dirty_count,
@@ -411,23 +400,21 @@ pub struct InodeCacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_inode_location_calc() {
         let cache = InodeCache::default();
-        
+
         let inodes_per_group = 128;
         let inode_table_start = 100;
         let block_size = BLOCK_SIZE;
-        
-        let (block, offset, group) = cache.calc_inode_location(
-            1, inodes_per_group, inode_table_start, block_size
-        );
+
+        let (block, offset, group) =
+            cache.calc_inode_location(1, inodes_per_group, inode_table_start, block_size);
         assert_eq!(block, 100);
         assert_eq!(offset, 0);
         assert_eq!(group, 0);
-        
-     
+
         let (block, offset, group) = cache.calc_inode_location(
             (INODES_PER_BLOCK + 1) as u32,
             inodes_per_group,
@@ -438,12 +425,12 @@ mod tests {
         assert_eq!(offset, 0);
         assert_eq!(group, 0);
     }
-    
+
     #[test]
     fn test_inode_cache_basic() {
         let cache = InodeCache::new(4, 256);
         let stats = cache.stats();
-        
+
         assert_eq!(stats.total_entries, 0);
         assert_eq!(stats.max_entries, 4);
     }

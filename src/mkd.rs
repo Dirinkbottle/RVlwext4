@@ -1,24 +1,24 @@
 //创建文件夹功能模块
 
-use core::{error::Error};
+use core::error::Error;
 
-use alloc::string::String;
-use alloc::vec::Vec;
 use crate::BLOCK_SIZE;
-use crate::blockdev::{Jbd2Dev, BlockDevice, BlockDevResult, BlockDevError};
+use crate::alloc::string::ToString;
+use crate::blockdev::{BlockDevError, BlockDevResult, BlockDevice, Jbd2Dev};
+use crate::disknode::{Ext4Extent, Ext4ExtentHeader};
+use crate::endian::DiskFormat;
 use crate::ext4::find_file;
-use crate::loopfile::{resolve_inode_block, get_file_inode};
+use crate::extents_tree::{ExtentNode, ExtentTree};
+use crate::loopfile::{get_file_inode, resolve_inode_block};
 use crate::mkfile::build_file_block_mapping;
 use crate::{
     disknode::Ext4Inode,
     entries::Ext4DirEntry2,
     ext4::{Ext4FileSystem, file_entry_exisr},
 };
-use crate::alloc::string::ToString;
+use alloc::string::String;
+use alloc::vec::Vec;
 use log::{debug, error};
-use crate::endian::DiskFormat;
-use crate::disknode::{Ext4Extent, Ext4ExtentHeader};
-use crate::extents_tree::{ExtentTree, ExtentNode};
 #[derive(Debug)]
 pub enum FileError {
     DirExist,
@@ -28,17 +28,16 @@ pub enum FileError {
 }
 
 ///合法化路径：去掉重复的 '/'
-pub fn split_paren_child_and_tranlatevalid(pat:&str)->String{
+pub fn split_paren_child_and_tranlatevalid(pat: &str) -> String {
     //去掉重复///类型和中间空路径
-    let mut last_c ='\0';
+    let mut last_c = '\0';
     let mut result_s = String::new();
     for ch in pat.chars() {
-        if ch =='/' && last_c=='/' {
+        if ch == '/' && last_c == '/' {
             continue;
         }
         result_s.push(ch);
-        last_c=ch;
-
+        last_c = ch;
     }
     // 去掉末尾多余的 '/'，但保留单独的根"/"
     while result_s.len() > 1 && result_s.ends_with('/') {
@@ -47,7 +46,6 @@ pub fn split_paren_child_and_tranlatevalid(pat:&str)->String{
 
     result_s
 }
-
 
 /// 路径解析，返回 (inode_num, inode)
 pub fn get_inode_with_num<B: BlockDevice>(
@@ -109,9 +107,7 @@ pub fn get_inode_with_num<B: BlockDevice>(
                 None => continue,
             };
 
-            let cached_block = fs
-                .datablock_cache
-                .get_or_load(device, phys as u64)?;
+            let cached_block = fs.datablock_cache.get_or_load(device, phys as u64)?;
             let block_data = &cached_block.data[..block_bytes];
 
             if let Some(entry) = crate::entries::classic_dir::find_entry(block_data, target) {
@@ -202,10 +198,7 @@ pub fn insert_dir_entry<B: BlockDevice>(
                     data[offset + 2],
                     data[offset + 3],
                 ]);
-                let rec_len = u16::from_le_bytes([
-                    data[offset + 4],
-                    data[offset + 5],
-                ]) as usize;
+                let rec_len = u16::from_le_bytes([data[offset + 4], data[offset + 5]]) as usize;
 
                 if inode == 0 || rec_len == 0 {
                     break;
@@ -268,8 +261,7 @@ pub fn insert_dir_entry<B: BlockDevice>(
             full_entry.rec_len = new_rec_len_total;
             full_entry.to_disk_bytes(&mut data[new_off..new_off + 8]);
             let nlen = full_entry.name_len as usize;
-            data[new_off + 8..new_off + 8 + nlen]
-                .copy_from_slice(&full_entry.name[..nlen]);
+            data[new_off + 8..new_off + 8 + nlen].copy_from_slice(&full_entry.name[..nlen]);
 
             inserted = true;
         });
@@ -294,7 +286,7 @@ pub fn insert_dir_entry<B: BlockDevice>(
     if fs.superblock.has_extents() && parent_inode.is_extent() {
         // extent 目录：通过 ExtentTree 追加一个长度为 1 的 extent
         let new_ext = Ext4Extent::new(new_lbn, new_block, 1);
-        let mut tree = ExtentTree::new( parent_inode);
+        let mut tree = ExtentTree::new(parent_inode);
         tree.insert_extent(fs, new_ext, device)?;
     } else {
         // 传统直接块模式：仅支持追加到前 12 个直接块
@@ -340,23 +332,28 @@ pub fn insert_dir_entry<B: BlockDevice>(
     )?;
 
     // 在新分配的数据块中写入唯一的目录项，占满整个块
-    fs.datablock_cache.modify(device, new_block as u64, |data| {
-        for b in data.iter_mut() {
-            *b = 0;
-        }
-        let mut full_entry = new_entry;
-        full_entry.rec_len = BLOCK_SIZE as u16;
-        full_entry.to_disk_bytes(&mut data[0..8]);
-        let nlen = full_entry.name_len as usize;
-        data[8..8 + nlen].copy_from_slice(&full_entry.name[..nlen]);
-    })?;
+    fs.datablock_cache
+        .modify(device, new_block as u64, |data| {
+            for b in data.iter_mut() {
+                *b = 0;
+            }
+            let mut full_entry = new_entry;
+            full_entry.rec_len = BLOCK_SIZE as u16;
+            full_entry.to_disk_bytes(&mut data[0..8]);
+            let nlen = full_entry.name_len as usize;
+            data[8..8 + nlen].copy_from_slice(&full_entry.name[..nlen]);
+        })?;
 
     Ok(())
 }
 
 /// 默认开启hashtree查找
 /// 通用文件创建：支持多级路径、递归创建父目录
-pub fn mkdir<B: BlockDevice>(device: &mut Jbd2Dev<B>, fs: &mut Ext4FileSystem, path: &str) -> Option<Ext4Inode> {
+pub fn mkdir<B: BlockDevice>(
+    device: &mut Jbd2Dev<B>,
+    fs: &mut Ext4FileSystem,
+    path: &str,
+) -> Option<Ext4Inode> {
     // 先对传入路径做规范化（去掉重复的 '/' 等）
     let norm_path = split_paren_child_and_tranlatevalid(path);
 
@@ -376,9 +373,7 @@ pub fn mkdir<B: BlockDevice>(device: &mut Jbd2Dev<B>, fs: &mut Ext4FileSystem, p
     }
 
     // 拆分规范化路径，构建 path_vec
-    let parts: Vec<&str> = norm_path.split('/')
-        .filter(|s| !s.is_empty())
-        .collect();
+    let parts: Vec<&str> = norm_path.split('/').filter(|s| !s.is_empty()).collect();
 
     if parts.is_empty() {
         return fs.get_root(device).ok();
@@ -415,10 +410,11 @@ pub fn mkdir<B: BlockDevice>(device: &mut Jbd2Dev<B>, fs: &mut Ext4FileSystem, p
     };
 
     // 再次获取父目录 inode 及其 inode 号
-    let (parent_ino_num, mut parent_inode) = match get_inode_with_num(fs, device, &parent).ok().flatten() {
-        Some((n, ino)) => (n, ino),
-        None => return None,
-    };
+    let (parent_ino_num, mut parent_inode) =
+        match get_inode_with_num(fs, device, &parent).ok().flatten() {
+            Some((n, ino)) => (n, ino),
+            None => return None,
+        };
 
     // 特殊情况：根目录本身
     if (parent == "" || parent == "/") && child.is_empty() {
@@ -485,8 +481,7 @@ pub fn mkdir<B: BlockDevice>(device: &mut Jbd2Dev<B>, fs: &mut Ext4FileSystem, p
             let offset = dot_rec_len as usize;
             dotdot.to_disk_bytes(&mut data[offset..offset + 8]);
             let name_len = dotdot.name_len as usize;
-            data[offset + 8..offset + 8 + name_len]
-                .copy_from_slice(&dotdot.name[..name_len]);
+            data[offset + 8..offset + 8 + name_len].copy_from_slice(&dotdot.name[..name_len]);
         }
     }
 
@@ -503,31 +498,31 @@ pub fn mkdir<B: BlockDevice>(device: &mut Jbd2Dev<B>, fs: &mut Ext4FileSystem, p
         BLOCK_SIZE,
     );
 
-      //仅仅的视图，修改过后的
-    
-    let mut inode_pre= fs.get_inode_by_num(device, new_dir_ino).expect("Can't getinode");
-    build_file_block_mapping(fs,  &mut inode_pre, &[data_block],device);
-    if fs.modify_inode(
-            device,
-            new_dir_ino as u32,
-            |inode| {
-                inode.i_block = inode_pre.i_block;
-                inode.i_mode = Ext4Inode::S_IFDIR | 0o755;
-                inode.i_links_count = 2; // . 和 entires本身
-                inode.i_size_lo = BLOCK_SIZE as u32;
-                inode.i_size_high = 0;
-                inode.i_blocks_lo = (BLOCK_SIZE / 512) as u32;
-                inode.l_i_blocks_high = 0;
-                inode.i_flags |= inode_pre.i_flags | Ext4Inode::EXT4_EXTENTS_FL | Ext4Inode::EXT4_INDEX_FL
+    //仅仅的视图，修改过后的
 
-                //由于借用冲突，暂时先把mapping移步到外面
-            },
-        )
+    let mut inode_pre = fs
+        .get_inode_by_num(device, new_dir_ino)
+        .expect("Can't getinode");
+    build_file_block_mapping(fs, &mut inode_pre, &[data_block], device);
+    if fs
+        .modify_inode(device, new_dir_ino as u32, |inode| {
+            inode.i_block = inode_pre.i_block;
+            inode.i_mode = Ext4Inode::S_IFDIR | 0o755;
+            inode.i_links_count = 2; // . 和 entires本身
+            inode.i_size_lo = BLOCK_SIZE as u32;
+            inode.i_size_high = 0;
+            inode.i_blocks_lo = (BLOCK_SIZE / 512) as u32;
+            inode.l_i_blocks_high = 0;
+            inode.i_flags |=
+                inode_pre.i_flags | Ext4Inode::EXT4_EXTENTS_FL | Ext4Inode::EXT4_INDEX_FL
+
+            //由于借用冲突，暂时先把mapping移步到外面
+        })
         .is_err()
     {
         return None;
     }
-  
+
     //更新父目录的i_links_count+1
     {
         let (p_group, _pidx) = fs.inode_allocator.global_to_group(parent_ino_num);
@@ -561,15 +556,23 @@ pub fn mkdir<B: BlockDevice>(device: &mut Jbd2Dev<B>, fs: &mut Ext4FileSystem, p
     }
 
     // 在父目录的数据块中插入新目录项（线性目录，多块遍历，必要时自动扩展目录块）
-    if insert_dir_entry(fs, device, parent_ino_num, &mut parent_inode, new_dir_ino, &child, Ext4DirEntry2::EXT4_FT_DIR).is_err() {
+    if insert_dir_entry(
+        fs,
+        device,
+        parent_ino_num,
+        &mut parent_inode,
+        new_dir_ino,
+        &child,
+        Ext4DirEntry2::EXT4_FT_DIR,
+    )
+    .is_err()
+    {
         return None;
     }
 
     // 返回新目录的 inode
     get_file_inode(fs, device, path).ok().flatten()
 }
-
-
 
 /// 根目录创建实现
 pub fn create_root_directory_entry<B: BlockDevice>(
@@ -618,33 +621,28 @@ pub fn create_root_directory_entry<B: BlockDevice>(
             let offset = dot_rec_len as usize;
             dotdot.to_disk_bytes(&mut data[offset..offset + 8]);
             let name_len = dotdot.name_len as usize;
-            data[offset + 8..offset + 8 + name_len]
-                .copy_from_slice(&dotdot.name[..name_len]);
+            data[offset + 8..offset + 8 + name_len].copy_from_slice(&dotdot.name[..name_len]);
         }
     }
 
- 
     //仅仅的视图，修改过后的
     let root_inode_num = fs.root_inode;
-    let mut inode_pre= fs.get_inode_by_num(block_dev, root_inode_num).expect("Can't getinode");
-    build_file_block_mapping(fs,  &mut inode_pre, &[data_block],block_dev);
+    let mut inode_pre = fs
+        .get_inode_by_num(block_dev, root_inode_num)
+        .expect("Can't getinode");
+    build_file_block_mapping(fs, &mut inode_pre, &[data_block], block_dev);
 
-    fs.modify_inode(
-            block_dev,
-            fs.root_inode,
-            |inode| {
-                inode.i_flags = inode_pre.i_flags | Ext4Inode::EXT4_INDEX_FL;
-                inode.i_block=inode_pre.i_block;
-                inode.i_mode = Ext4Inode::S_IFDIR | 0o755; // 目录 + 权限
-                inode.i_links_count = 2; // . 和 ..
-                inode.i_size_lo = BLOCK_SIZE as u32;
-                inode.i_size_high = 0;
-                // i_blocks 以 512 字节为单位
-                inode.i_blocks_lo = (BLOCK_SIZE / 512) as u32;
-                inode.l_i_blocks_high = 0;
-            },
-        )?;
-
+    fs.modify_inode(block_dev, fs.root_inode, |inode| {
+        inode.i_flags = inode_pre.i_flags | Ext4Inode::EXT4_INDEX_FL;
+        inode.i_block = inode_pre.i_block;
+        inode.i_mode = Ext4Inode::S_IFDIR | 0o755; // 目录 + 权限
+        inode.i_links_count = 2; // . 和 ..
+        inode.i_size_lo = BLOCK_SIZE as u32;
+        inode.i_size_high = 0;
+        // i_blocks 以 512 字节为单位
+        inode.i_blocks_lo = (BLOCK_SIZE / 512) as u32;
+        inode.l_i_blocks_high = 0;
+    })?;
 
     //块组描述符更新 目录数
     if let Some(desc) = fs.get_group_desc_mut(0) {
@@ -653,7 +651,10 @@ pub fn create_root_directory_entry<B: BlockDevice>(
         desc.bg_used_dirs_count_hi = ((newc >> 16) & 0xFFFF) as u16;
     }
 
-    debug!("Root directory created: inode={}, data_block={}", fs.root_inode, data_block);
+    debug!(
+        "Root directory created: inode={}, data_block={}",
+        fs.root_inode, data_block
+    );
     Ok(())
 }
 
@@ -683,12 +684,7 @@ pub fn create_lost_found_directory<B: BlockDevice>(
 
         let dot_name = b".";
         let dot_rec_len = Ext4DirEntry2::entry_len(dot_name.len() as u8);
-        let dot = Ext4DirEntry2::new(
-            lost_ino,
-            dot_rec_len,
-            Ext4DirEntry2::EXT4_FT_DIR,
-            dot_name,
-        );
+        let dot = Ext4DirEntry2::new(lost_ino, dot_rec_len, Ext4DirEntry2::EXT4_FT_DIR, dot_name);
 
         let dotdot_name = b"..";
         let dotdot_rec_len = (BLOCK_SIZE as u16).saturating_sub(dot_rec_len);
@@ -709,8 +705,7 @@ pub fn create_lost_found_directory<B: BlockDevice>(
             let offset = dot_rec_len as usize;
             dotdot.to_disk_bytes(&mut data[offset..offset + 8]);
             let name_len = dotdot.name_len as usize;
-            data[offset + 8..offset + 8 + name_len]
-                .copy_from_slice(&dotdot.name[..name_len]);
+            data[offset + 8..offset + 8 + name_len].copy_from_slice(&dotdot.name[..name_len]);
         }
     }
 
@@ -728,25 +723,24 @@ pub fn create_lost_found_directory<B: BlockDevice>(
     );
 
     //仅仅的视图，修改过后的
-    let mut inode_pre= fs.get_inode_by_num(block_dev, lost_ino).expect("Can't getinode");
-    build_file_block_mapping(fs,  &mut inode_pre, &[data_block],block_dev);
-    error!("When create lost+found inode iblock,:{:?} ,data_block:{:?}",inode_pre.i_block,data_block);
+    let mut inode_pre = fs
+        .get_inode_by_num(block_dev, lost_ino)
+        .expect("Can't getinode");
+    build_file_block_mapping(fs, &mut inode_pre, &[data_block], block_dev);
+    error!(
+        "When create lost+found inode iblock,:{:?} ,data_block:{:?}",
+        inode_pre.i_block, data_block
+    );
     // lost+found 的数据块映射与根目录保持一致：单块目录，按特性选择 extent 或直接块
-    fs
-        .modify_inode(
-            block_dev,
-            lost_ino,
-            |inode| {
-                // 写回 build_block_dir_mapping 已经构建好的块映射和标志
-                inode.i_block = inode_pre.i_block;
-                inode.i_flags = inode_pre.i_flags | Ext4Inode::EXT4_INDEX_FL;
-                inode.i_mode = Ext4Inode::S_IFDIR | 0o755;
-                inode.i_links_count = 2;
-                inode.i_size_lo = BLOCK_SIZE as u32;
-                inode.i_blocks_lo = (BLOCK_SIZE / 512) as u32;
-            },
-        )?;
- 
+    fs.modify_inode(block_dev, lost_ino, |inode| {
+        // 写回 build_block_dir_mapping 已经构建好的块映射和标志
+        inode.i_block = inode_pre.i_block;
+        inode.i_flags = inode_pre.i_flags | Ext4Inode::EXT4_INDEX_FL;
+        inode.i_mode = Ext4Inode::S_IFDIR | 0o755;
+        inode.i_links_count = 2;
+        inode.i_size_lo = BLOCK_SIZE as u32;
+        inode.i_blocks_lo = (BLOCK_SIZE / 512) as u32;
+    })?;
 
     if let Some(desc) = fs.get_group_desc_mut(lf_group) {
         let newc = desc.used_dirs_count().saturating_add(1);
@@ -754,68 +748,64 @@ pub fn create_lost_found_directory<B: BlockDevice>(
         desc.bg_used_dirs_count_hi = ((newc >> 16) & 0xFFFF) as u16;
     }
 
-     //  更新根目录数据块：加入 lost+found 目录项
+    //  更新根目录数据块：加入 lost+found 目录项
 
     //这里也需要根据extend来解析
     let mut root_inode = fs.get_root(block_dev)?;
-    let mut root_block=resolve_inode_block(fs, block_dev, &mut root_inode, 0)?.expect("lost+found logical_block can't map to physical blcok!");
+    let mut root_block = resolve_inode_block(fs, block_dev, &mut root_inode, 0)?
+        .expect("lost+found logical_block can't map to physical blcok!");
 
     if root_block == 0 {
         return Err(BlockDevError::Corrupted);
     }
 
-    fs.datablock_cache.modify(block_dev, root_block as u64, move |data| {
-        let dot_name = b".";
-        let dot_rec_len = Ext4DirEntry2::entry_len(dot_name.len() as u8);
-        let dot = Ext4DirEntry2::new(
-            root_inode_num,
-            dot_rec_len,
-            Ext4DirEntry2::EXT4_FT_DIR,
-            dot_name,
-        );
+    fs.datablock_cache
+        .modify(block_dev, root_block as u64, move |data| {
+            let dot_name = b".";
+            let dot_rec_len = Ext4DirEntry2::entry_len(dot_name.len() as u8);
+            let dot = Ext4DirEntry2::new(
+                root_inode_num,
+                dot_rec_len,
+                Ext4DirEntry2::EXT4_FT_DIR,
+                dot_name,
+            );
 
-        let dotdot_name = b"..";
-        let dotdot_rec_len = Ext4DirEntry2::entry_len(dotdot_name.len() as u8);
-        let dotdot = Ext4DirEntry2::new(
-            root_inode_num,
-            dotdot_rec_len,
-            Ext4DirEntry2::EXT4_FT_DIR,
-            dotdot_name,
-        );
+            let dotdot_name = b"..";
+            let dotdot_rec_len = Ext4DirEntry2::entry_len(dotdot_name.len() as u8);
+            let dotdot = Ext4DirEntry2::new(
+                root_inode_num,
+                dotdot_rec_len,
+                Ext4DirEntry2::EXT4_FT_DIR,
+                dotdot_name,
+            );
 
-        let lf_name = b"lost+found";
-        let lf_rec_len = (BLOCK_SIZE as u16).saturating_sub(dot_rec_len + dotdot_rec_len);
-        let lost = Ext4DirEntry2::new(
-            lost_ino,
-            lf_rec_len,
-            Ext4DirEntry2::EXT4_FT_DIR,
-            lf_name,
-        );
+            let lf_name = b"lost+found";
+            let lf_rec_len = (BLOCK_SIZE as u16).saturating_sub(dot_rec_len + dotdot_rec_len);
+            let lost =
+                Ext4DirEntry2::new(lost_ino, lf_rec_len, Ext4DirEntry2::EXT4_FT_DIR, lf_name);
 
-        // 清零整个块
-        for b in data.iter_mut() {
-            *b = 0;
-        }
+            // 清零整个块
+            for b in data.iter_mut() {
+                *b = 0;
+            }
 
-        // 写 .
-        dot.to_disk_bytes(&mut data[0..8]);
-        let name_len = dot.name_len as usize;
-        data[8..8 + name_len].copy_from_slice(&dot.name[..name_len]);
+            // 写 .
+            dot.to_disk_bytes(&mut data[0..8]);
+            let name_len = dot.name_len as usize;
+            data[8..8 + name_len].copy_from_slice(&dot.name[..name_len]);
 
-        // 写 ..
-        let mut offset = dot_rec_len as usize;
-        dotdot.to_disk_bytes(&mut data[offset..offset + 8]);
-        let dd_len = dotdot.name_len as usize;
-        data[offset + 8..offset + 8 + dd_len]
-            .copy_from_slice(&dotdot.name[..dd_len]);
+            // 写 ..
+            let mut offset = dot_rec_len as usize;
+            dotdot.to_disk_bytes(&mut data[offset..offset + 8]);
+            let dd_len = dotdot.name_len as usize;
+            data[offset + 8..offset + 8 + dd_len].copy_from_slice(&dotdot.name[..dd_len]);
 
-        // 写 lost+found
-        offset += dotdot_rec_len as usize;
-        lost.to_disk_bytes(&mut data[offset..offset + 8]);
-        let lf_len = lost.name_len as usize;
-        data[offset + 8..offset + 8 + lf_len]
-            .copy_from_slice(&lost.name[..lf_len]);
-    })?;
+            // 写 lost+found
+            offset += dotdot_rec_len as usize;
+            lost.to_disk_bytes(&mut data[offset..offset + 8]);
+            let lf_len = lost.name_len as usize;
+            data[offset + 8..offset + 8 + lf_len].copy_from_slice(&lost.name[..lf_len]);
+        })?;
 
     //  更新根 inode 的链接计数（多了一个子目录）
     let inode_table_start = match fs.group_descs.get(0) {
@@ -845,11 +835,8 @@ pub fn create_lost_found_directory<B: BlockDevice>(
 
     debug!(
         "lost+found directory created: inode={}, data_block={}",
-        lost_ino,
-        data_block
+        lost_ino, data_block
     );
-
-
 
     Ok(())
 }

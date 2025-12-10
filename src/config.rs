@@ -10,7 +10,7 @@ pub const BLOCK_SIZE_U32: u32 = BLOCK_SIZE as u32;
 /// Ext4 块大小对数（log2）
 
 /// 用于超级块的 s_log_block_size 字段
-pub const LOG_BLOCK_SIZE: u32 = 2;  // 4096 = 1024 << 2
+pub const LOG_BLOCK_SIZE: u32 = 2; // 4096 = 1024 << 2
 // ============================================================================
 // 块组相关配置
 // ============================================================================
@@ -33,15 +33,14 @@ pub const INODES_PER_BLOCK: u32 = (BLOCK_SIZE / INODE_SIZE as usize) as u32;
 // 数据结构缓存相关
 // ============================================================================
 ///Inodecahe数量
-pub const INODE_CACHE_MAX:usize = 32;
+pub const INODE_CACHE_MAX: usize = 32;
 ///Datablock cahce数量
-pub const DATABLOCK_CACHE_MAX:usize = 32;
-
+pub const DATABLOCK_CACHE_MAX: usize = 32;
 
 //============================================================================
 //目录项DirEntry配置
 //============================================================================
-pub const DIRNAME_LEN:usize =32;//目录名长度
+pub const DIRNAME_LEN: usize = 32; //目录名长度
 ///保留inodes数量
 pub const RESERVED_INODES: u32 = 10;
 
@@ -66,13 +65,12 @@ pub const RESERVED_GDT_BLOCKS: u32 = 0;
 /// 默认的兼容特性标志
 pub const DEFAULT_FEATURE_COMPAT: u32 = Ext4Superblock::EXT4_FEATURE_COMPAT_HAS_JOURNAL;
 /// 默认的不兼容特性标志
-pub const DEFAULT_FEATURE_INCOMPAT: u32 =
-    Ext4Superblock::EXT4_FEATURE_INCOMPAT_FILETYPE
+pub const DEFAULT_FEATURE_INCOMPAT: u32 = Ext4Superblock::EXT4_FEATURE_INCOMPAT_FILETYPE
     | Ext4Superblock::EXT4_FEATURE_INCOMPAT_64BIT
     | Ext4Superblock::EXT4_FEATURE_INCOMPAT_EXTENTS;
 
 /// 默认的只读兼容特性标志
-pub const DEFAULT_FEATURE_RO_COMPAT: u32 = Ext4Superblock::EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE 
+pub const DEFAULT_FEATURE_RO_COMPAT: u32 = Ext4Superblock::EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE
     | Ext4Superblock::EXT4_FEATURE_RO_COMPAT_SPARSE_SUPER;
 
 // ============================================================================
@@ -87,4 +85,3 @@ pub const EXT4_MAJOR_VERSION: u32 = 1;
 
 /// 文件系统版本（次版本号）
 pub const EXT4_MINOR_VERSION: u16 = 0;
-
