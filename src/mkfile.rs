@@ -2,27 +2,24 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 use log::{error, warn};
 
-use crate::disknode::{Ext4Inode, Ext4Extent, Ext4ExtentHeader};
-use crate::extents_tree::{ExtentTree, ExtentNode};
-use crate::endian::DiskFormat;
-use crate::ext4::Ext4FileSystem;
-use crate::mkd::{ get_inode_with_num, mkdir, split_paren_child_and_tranlatevalid};
-use crate::loopfile::{get_file_inode, resolve_inode_block};
-use crate::entries::Ext4DirEntry2;
-use crate::blockdev::{BlockDevice, Jbd2Dev, BlockDevResult, BlockDevError};
 use crate::BLOCK_SIZE;
+use crate::blockdev::{BlockDevError, BlockDevResult, BlockDevice, Jbd2Dev};
+use crate::disknode::{Ext4Extent, Ext4ExtentHeader, Ext4Inode};
+use crate::endian::DiskFormat;
+use crate::entries::Ext4DirEntry2;
+use crate::ext4::Ext4FileSystem;
+use crate::extents_tree::{ExtentNode, ExtentTree};
+use crate::loopfile::{get_file_inode, resolve_inode_block};
+use crate::mkd::{get_inode_with_num, mkdir, split_paren_child_and_tranlatevalid};
 ///mkfile lib
-
-
-
 
 /// 根据数据块列表为普通文件 inode 构建块映射：
 /// - 否则使用传统直接块指针（i_block[0..]）。
-pub fn build_file_block_mapping<B:BlockDevice>(
+pub fn build_file_block_mapping<B: BlockDevice>(
     fs: &mut Ext4FileSystem,
     inode: &mut Ext4Inode,
     data_blocks: &[u64],
-    block_dev:&mut Jbd2Dev<B>
+    block_dev: &mut Jbd2Dev<B>,
 ) {
     if data_blocks.is_empty() {
         inode.i_blocks_lo = 0;
@@ -31,10 +28,7 @@ pub fn build_file_block_mapping<B:BlockDevice>(
         return;
     }
 
-    
-
     if fs.superblock.has_extents() {
-        
         // 使用 extent 映射数据块，优先合并连续块
         inode.i_flags |= Ext4Inode::EXT4_EXTENTS_FL;
         inode.i_block = [0; 15];
@@ -43,42 +37,41 @@ pub fn build_file_block_mapping<B:BlockDevice>(
         if !inode.have_extend_header() {
             warn!("inode not have a valid extend magic,will building...");
             inode.write_extend_header();
-            
         }
-    
-            let mut exts_vec: Vec<Ext4Extent> = Vec::new();
 
-            let mut run_start_lbn: u32 = 0;
-            let mut run_start_pblk: u64 = data_blocks[0];
-            let mut run_len: u32 = 1;
+        let mut exts_vec: Vec<Ext4Extent> = Vec::new();
 
-            for (idx, &pblk) in data_blocks.iter().enumerate().skip(1) {
-                let lbn = idx as u32;
-                let prev_lbn = lbn - 1;
-                let prev_pblk = data_blocks[prev_lbn as usize];
+        let mut run_start_lbn: u32 = 0;
+        let mut run_start_pblk: u64 = data_blocks[0];
+        let mut run_len: u32 = 1;
 
-                let is_contiguous = pblk == prev_pblk.saturating_add(1);
+        for (idx, &pblk) in data_blocks.iter().enumerate().skip(1) {
+            let lbn = idx as u32;
+            let prev_lbn = lbn - 1;
+            let prev_pblk = data_blocks[prev_lbn as usize];
 
-                if is_contiguous {
-                    run_len = run_len.saturating_add(1);
-                } else {
-                    // 结束当前 run，生成一个 extent
-                    let ext = Ext4Extent::new(run_start_lbn, run_start_pblk, run_len as u16);
-                    exts_vec.push(ext);
+            let is_contiguous = pblk == prev_pblk.saturating_add(1);
 
-                    run_start_lbn = lbn;
-                    run_start_pblk = pblk;
-                    run_len = 1;
-                }
-            }
-
+            if is_contiguous {
+                run_len = run_len.saturating_add(1);
+            } else {
+                // 结束当前 run，生成一个 extent
                 let ext = Ext4Extent::new(run_start_lbn, run_start_pblk, run_len as u16);
                 exts_vec.push(ext);
+
+                run_start_lbn = lbn;
+                run_start_pblk = pblk;
+                run_len = 1;
+            }
+        }
+
+        let ext = Ext4Extent::new(run_start_lbn, run_start_pblk, run_len as u16);
+        exts_vec.push(ext);
 
         // 构造一个叶子根节点，并通过 ExtentTree 将其写入 inode.i_block
         let mut tree = ExtentTree::new(inode);
         for extend in exts_vec {
-            tree.insert_extent(fs, extend,block_dev )     ;       
+            tree.insert_extent(fs, extend, block_dev);
         }
     } else {
         //传统直接最多使用前12个+3个间接指针
@@ -95,7 +88,12 @@ pub fn build_file_block_mapping<B:BlockDevice>(
 
 ///创建文件类型entry通用接口
 /// 传入文件名称,可选初始数据
-pub fn mkfile<B: BlockDevice>(device: &mut Jbd2Dev<B>,fs:&mut Ext4FileSystem, path:&str,initial_data:Option<&[u8]>)->Option<Ext4Inode>{
+pub fn mkfile<B: BlockDevice>(
+    device: &mut Jbd2Dev<B>,
+    fs: &mut Ext4FileSystem,
+    path: &str,
+    initial_data: Option<&[u8]>,
+) -> Option<Ext4Inode> {
     // 规范化路径
     let norm_path = split_paren_child_and_tranlatevalid(path);
 
@@ -116,10 +114,11 @@ pub fn mkfile<B: BlockDevice>(device: &mut Jbd2Dev<B>,fs:&mut Ext4FileSystem, pa
     }
 
     // 重新获取父目录 inode 及其 inode 号
-    let (parent_ino_num, parent_inode) = match get_inode_with_num(fs, device, &parent).ok().flatten() {
-        Some((n, ino)) => (n, ino),
-        None => return None,
-    };
+    let (parent_ino_num, parent_inode) =
+        match get_inode_with_num(fs, device, &parent).ok().flatten() {
+            Some((n, ino)) => (n, ino),
+            None => return None,
+        };
 
     //为新文件分配 inode（内部自动选择块组）
     let new_file_ino = match fs.alloc_inode(device) {
@@ -148,13 +147,17 @@ pub fn mkfile<B: BlockDevice>(device: &mut Jbd2Dev<B>,fs:&mut Ext4FileSystem, pa
             let write_len = core::cmp::min(remaining, BLOCK_SIZE as usize);
 
             // 将数据写入新分配的数据块，其余部分填零
-            if fs.datablock_cache.modify(device, blk as u64, |data| {
-                for b in data.iter_mut() {
-                    *b = 0;
-                }
-                let end = src_off + write_len;
-                data[..write_len].copy_from_slice(&buf[src_off..end]);
-            }).is_err() {
+            if fs
+                .datablock_cache
+                .modify(device, blk as u64, |data| {
+                    for b in data.iter_mut() {
+                        *b = 0;
+                    }
+                    let end = src_off + write_len;
+                    data[..write_len].copy_from_slice(&buf[src_off..end]);
+                })
+                .is_err()
+            {
                 break;
             }
 
@@ -178,7 +181,7 @@ pub fn mkfile<B: BlockDevice>(device: &mut Jbd2Dev<B>,fs:&mut Ext4FileSystem, pa
         new_inode.i_blocks_lo = used_blocks.saturating_mul((BLOCK_SIZE / 512) as u32);
         new_inode.l_i_blocks_high = 0;
 
-        build_file_block_mapping(fs, &mut new_inode, &data_blocks,device);
+        build_file_block_mapping(fs, &mut new_inode, &data_blocks, device);
     } else {
         //无初始数据：空文件
         new_inode.i_size_lo = 0;
@@ -199,13 +202,22 @@ pub fn mkfile<B: BlockDevice>(device: &mut Jbd2Dev<B>,fs:&mut Ext4FileSystem, pa
 
     //在父目录中插入一个普通文件类型的目录项（必要时自动扩展目录块）
     let mut parent_inode_copy = parent_inode;
-    if crate::mkd::insert_dir_entry(fs, device, parent_ino_num, &mut parent_inode_copy, new_file_ino, &child, Ext4DirEntry2::EXT4_FT_REG_FILE).is_err() {
+    if crate::mkd::insert_dir_entry(
+        fs,
+        device,
+        parent_ino_num,
+        &mut parent_inode_copy,
+        new_file_ino,
+        &child,
+        Ext4DirEntry2::EXT4_FT_REG_FILE,
+    )
+    .is_err()
+    {
         return None;
     }
 
     //返回新文件 inode
     get_file_inode(fs, device, path).ok().flatten()
-
 }
 
 ///读取指定路径的整个文件内容
@@ -236,9 +248,7 @@ pub fn read_file<B: BlockDevice>(
             None => break,
         };
 
-        let cached = fs
-            .datablock_cache
-            .get_or_load(device, phys as u64)?;
+        let cached = fs.datablock_cache.get_or_load(device, phys as u64)?;
         let data = &cached.data[..block_bytes];
         buf.extend_from_slice(data);
     }
@@ -350,20 +360,15 @@ pub fn write_file<B: BlockDevice>(
             BLOCK_SIZE,
         );
 
-        fs.inodetable_cahce.modify(
-            device,
-            inode_num as u64,
-            block_num,
-            off,
-            |on_disk| {
+        fs.inodetable_cahce
+            .modify(device, inode_num as u64, block_num, off, |on_disk| {
                 on_disk.i_size_lo = inode.i_size_lo;
                 on_disk.i_size_high = inode.i_size_high;
                 on_disk.i_blocks_lo = inode.i_blocks_lo;
                 on_disk.l_i_blocks_high = inode.l_i_blocks_high;
                 on_disk.i_flags = inode.i_flags;
                 on_disk.i_block = inode.i_block;
-            },
-        )?;
+            })?;
     }
 
     let final_size = old_size.max(end);
@@ -396,8 +401,7 @@ pub fn write_file<B: BlockDevice>(
             let dst_off = write_start - block_start;
             let len = write_end - write_start;
 
-            blk[dst_off..dst_off + len]
-                .copy_from_slice(&data[src_off..src_off + len]);
+            blk[dst_off..dst_off + len].copy_from_slice(&data[src_off..src_off + len]);
         })?;
     }
 

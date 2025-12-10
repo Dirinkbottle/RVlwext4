@@ -1,10 +1,10 @@
 use crate::ext4::BlcokGroupLayout;
 use crate::{ext4::Ext4FileSystem, superblock::Ext4Superblock};
-use log::debug;
 use alloc::vec;
 use alloc::vec::*;
+use log::debug;
 
-pub fn debugSuperAndDesc(superblock:&Ext4Superblock,fs:&Ext4FileSystem){
+pub fn debugSuperAndDesc(superblock: &Ext4Superblock, fs: &Ext4FileSystem) {
     debug!("Superblock info: {:?}", &superblock);
     debug!("Block group descriptors:");
     let desc = &fs.group_descs;
@@ -14,32 +14,31 @@ pub fn debugSuperAndDesc(superblock:&Ext4Superblock,fs:&Ext4FileSystem){
 }
 
 ///是否需要redundance backup
-pub fn need_redundant_backup(gid:u32)->bool{
-   if gid==0 || gid==1 {
-       return true;
-   }
-   let tmp_number  =gid as usize;
-   let count:Vec<usize> = vec![3,5,7];
-   for gid in count {
-      if is_numbers_power(tmp_number, gid){
+pub fn need_redundant_backup(gid: u32) -> bool {
+    if gid == 0 || gid == 1 {
         return true;
-      }
-   }
-   false
-
+    }
+    let tmp_number = gid as usize;
+    let count: Vec<usize> = vec![3, 5, 7];
+    for gid in count {
+        if is_numbers_power(tmp_number, gid) {
+            return true;
+        }
+    }
+    false
 }
 ///number是不是base的幂
-pub fn is_numbers_power(number:usize,base:usize)->bool{
+pub fn is_numbers_power(number: usize, base: usize) -> bool {
     let mut tmp_number = number;
-    if tmp_number == 1{
+    if tmp_number == 1 {
         return true;
     }
-    while tmp_number%base==0 {
-        tmp_number/=base;
+    while tmp_number % base == 0 {
+        tmp_number /= base;
     }
-    if tmp_number==1 {
+    if tmp_number == 1 {
         return true;
-    }else {
+    } else {
         return false;
     }
 }
@@ -75,20 +74,19 @@ pub fn cloc_group_layout(
     let group_start = gid * blocks_per_group;
 
     // 是否启用 sparse super
-    let sparse_feature = sb.has_feature_ro_compat(Ext4Superblock::EXT4_FEATURE_RO_COMPAT_SPARSE_SUPER);
+    let sparse_feature =
+        sb.has_feature_ro_compat(Ext4Superblock::EXT4_FEATURE_RO_COMPAT_SPARSE_SUPER);
 
     // 是否在该组放置超级块 / GDT 备份
     let has_backup = sparse_feature && need_redundant_backup(gid);
 
     let (block_bitmap, inode_bitmap, inode_table, meta_blocks) = if has_backup {
-
         let bb = group_start + 1 + gdt_blocks;
         let ib = bb + 1;
         let it = ib + 1;
         let meta = 1 + gdt_blocks + 1 + 1 + inode_table_blocks;
         (bb, ib, it, meta)
     } else {
-
         let bb = group_start;
         let ib = group_start + 1;
         let it = group_start + 2;

@@ -3,8 +3,8 @@
 /// 块位图包装结构
 #[derive(Debug)]
 pub struct BlockBitmap<'a> {
-    data: &'a [u8],             // 位图数据
-    blocks_per_group: u32,      // 每个块组的块数
+    data: &'a [u8],        // 位图数据
+    blocks_per_group: u32, // 每个块组的块数
 }
 
 impl<'a> BlockBitmap<'a> {
@@ -21,14 +21,14 @@ impl<'a> BlockBitmap<'a> {
         if block_idx >= self.blocks_per_group {
             return None;
         }
-        
+
         let byte_idx = (block_idx / 8) as usize;
         let bit_idx = (block_idx % 8) as u8;
-        
+
         if byte_idx >= self.data.len() {
             return None;
         }
-        
+
         Some((self.data[byte_idx] & (1 << bit_idx)) != 0)
     }
 
@@ -86,13 +86,13 @@ impl<'a> BlockBitmap<'a> {
     /// 统计空闲块数
     pub fn count_free(&self) -> u32 {
         let mut count = 0u32;
-        
+
         for block_idx in 0..self.blocks_per_group {
             if self.is_free(block_idx) == Some(true) {
                 count += 1;
             }
         }
-        
+
         count
     }
 
@@ -105,8 +105,8 @@ impl<'a> BlockBitmap<'a> {
 /// 可变块位图包装结构
 /// 用于修改位图
 pub struct BlockBitmapMut<'a> {
-    data: &'a mut [u8],         // 可变位图数据
-    blocks_per_group: u32,      // 每个块组的块数
+    data: &'a mut [u8],    // 可变位图数据
+    blocks_per_group: u32, // 每个块组的块数
 }
 
 impl<'a> BlockBitmapMut<'a> {
@@ -123,14 +123,14 @@ impl<'a> BlockBitmapMut<'a> {
         if block_idx >= self.blocks_per_group {
             return None;
         }
-        
+
         let byte_idx = (block_idx / 8) as usize;
         let bit_idx = (block_idx % 8) as u8;
-        
+
         if byte_idx >= self.data.len() {
             return None;
         }
-        
+
         Some((self.data[byte_idx] & (1 << bit_idx)) != 0)
     }
 
@@ -139,10 +139,10 @@ impl<'a> BlockBitmapMut<'a> {
         if block_idx >= self.blocks_per_group {
             return Err(BitmapError::IndexOutOfRange);
         }
-        
+
         let byte_idx = (block_idx / 8) as usize;
         let bit_idx = (block_idx % 8) as u8;
-        
+
         if byte_idx >= self.data.len() {
             return Err(BitmapError::IndexOutOfRange);
         }
@@ -150,10 +150,9 @@ impl<'a> BlockBitmapMut<'a> {
         if (self.data[byte_idx] & (1 << bit_idx)) != 0 {
             return Err(BitmapError::AlreadyAllocated);
         }
-        
+
         self.data[byte_idx] |= 1 << bit_idx;
 
-        
         Ok(())
     }
 
@@ -162,10 +161,10 @@ impl<'a> BlockBitmapMut<'a> {
         if block_idx >= self.blocks_per_group {
             return Err(BitmapError::IndexOutOfRange);
         }
-        
+
         let byte_idx = (block_idx / 8) as usize;
         let bit_idx = (block_idx % 8) as u8;
-        
+
         if byte_idx >= self.data.len() {
             return Err(BitmapError::IndexOutOfRange);
         }
@@ -173,7 +172,7 @@ impl<'a> BlockBitmapMut<'a> {
         if (self.data[byte_idx] & (1 << bit_idx)) == 0 {
             return Err(BitmapError::AlreadyFree);
         }
-        
+
         self.data[byte_idx] &= !(1 << bit_idx);
         Ok(())
     }
@@ -208,8 +207,8 @@ impl<'a> BlockBitmapMut<'a> {
 /// 每个块组都有自己的inode位图，用于跟踪该块组内的inode分配
 #[derive(Debug)]
 pub struct InodeBitmap<'a> {
-    data: &'a [u8],             // 位图数据
-    inodes_per_group: u32,      // 每个块组的inode数
+    data: &'a [u8],        // 位图数据
+    inodes_per_group: u32, // 每个块组的inode数
 }
 
 impl<'a> InodeBitmap<'a> {
@@ -227,14 +226,14 @@ impl<'a> InodeBitmap<'a> {
         if inode_idx >= self.inodes_per_group {
             return None;
         }
-        
+
         let byte_idx = (inode_idx / 8) as usize;
         let bit_idx = (inode_idx % 8) as u8;
-        
+
         if byte_idx >= self.data.len() {
             return None;
         }
-        
+
         Some((self.data[byte_idx] & (1 << bit_idx)) != 0)
     }
 
@@ -263,13 +262,13 @@ impl<'a> InodeBitmap<'a> {
     /// 统计空闲inode数
     pub fn count_free(&self) -> u32 {
         let mut count = 0u32;
-        
+
         for inode_idx in 0..self.inodes_per_group {
             if self.is_free(inode_idx) == Some(true) {
                 count += 1;
             }
         }
-        
+
         count
     }
 
@@ -281,8 +280,8 @@ impl<'a> InodeBitmap<'a> {
 
 /// 可变Inode位图包装结构
 pub struct InodeBitmapMut<'a> {
-    data: &'a mut [u8],         // 可变位图数据
-    inodes_per_group: u32,      // 每个块组的inode数
+    data: &'a mut [u8],    // 可变位图数据
+    inodes_per_group: u32, // 每个块组的inode数
 }
 
 impl<'a> InodeBitmapMut<'a> {
@@ -299,14 +298,14 @@ impl<'a> InodeBitmapMut<'a> {
         if inode_idx >= self.inodes_per_group {
             return None;
         }
-        
+
         let byte_idx = (inode_idx / 8) as usize;
         let bit_idx = (inode_idx % 8) as u8;
-        
+
         if byte_idx >= self.data.len() {
             return None;
         }
-        
+
         Some((self.data[byte_idx] & (1 << bit_idx)) != 0)
     }
 
@@ -315,10 +314,10 @@ impl<'a> InodeBitmapMut<'a> {
         if inode_idx >= self.inodes_per_group {
             return Err(BitmapError::IndexOutOfRange);
         }
-        
+
         let byte_idx = (inode_idx / 8) as usize;
         let bit_idx = (inode_idx % 8) as u8;
-        
+
         if byte_idx >= self.data.len() {
             return Err(BitmapError::IndexOutOfRange);
         }
@@ -326,7 +325,7 @@ impl<'a> InodeBitmapMut<'a> {
         if (self.data[byte_idx] & (1 << bit_idx)) != 0 {
             return Err(BitmapError::AlreadyAllocated);
         }
-        
+
         self.data[byte_idx] |= 1 << bit_idx;
         Ok(())
     }
@@ -336,10 +335,10 @@ impl<'a> InodeBitmapMut<'a> {
         if inode_idx >= self.inodes_per_group {
             return Err(BitmapError::IndexOutOfRange);
         }
-        
+
         let byte_idx = (inode_idx / 8) as usize;
         let bit_idx = (inode_idx % 8) as u8;
-        
+
         if byte_idx >= self.data.len() {
             return Err(BitmapError::IndexOutOfRange);
         }
@@ -347,7 +346,7 @@ impl<'a> InodeBitmapMut<'a> {
         if (self.data[byte_idx] & (1 << bit_idx)) == 0 {
             return Err(BitmapError::AlreadyFree);
         }
-        
+
         self.data[byte_idx] &= !(1 << bit_idx);
         Ok(())
     }
@@ -410,11 +409,11 @@ pub mod bitmap_utils {
     pub fn set_bit(data: &mut [u8], bit_idx: u32) -> bool {
         let byte_idx = (bit_idx / 8) as usize;
         let bit_pos = (bit_idx % 8) as u8;
-        
+
         if byte_idx >= data.len() {
             return false;
         }
-        
+
         data[byte_idx] |= 1 << bit_pos;
         true
     }
@@ -423,11 +422,11 @@ pub mod bitmap_utils {
     pub fn clear_bit(data: &mut [u8], bit_idx: u32) -> bool {
         let byte_idx = (bit_idx / 8) as usize;
         let bit_pos = (bit_idx % 8) as u8;
-        
+
         if byte_idx >= data.len() {
             return false;
         }
-        
+
         data[byte_idx] &= !(1 << bit_pos);
         true
     }
@@ -436,11 +435,11 @@ pub mod bitmap_utils {
     pub fn test_bit(data: &[u8], bit_idx: u32) -> Option<bool> {
         let byte_idx = (bit_idx / 8) as usize;
         let bit_pos = (bit_idx % 8) as u8;
-        
+
         if byte_idx >= data.len() {
             return None;
         }
-        
+
         Some((data[byte_idx] & (1 << bit_pos)) != 0)
     }
 
@@ -448,11 +447,11 @@ pub mod bitmap_utils {
     pub fn toggle_bit(data: &mut [u8], bit_idx: u32) -> bool {
         let byte_idx = (bit_idx / 8) as usize;
         let bit_pos = (bit_idx % 8) as u8;
-        
+
         if byte_idx >= data.len() {
             return false;
         }
-        
+
         data[byte_idx] ^= 1 << bit_pos;
         true
     }
@@ -467,9 +466,9 @@ mod tests {
     fn test_block_bitmap_basic() {
         let mut data = vec![0u8; 128]; // 1024位
         data[0] = 0b10101010; // 奇数位已分配
-        
+
         let bitmap = BlockBitmap::new(&data, 1024);
-        
+
         assert_eq!(bitmap.is_allocated(0), Some(false));
         assert_eq!(bitmap.is_allocated(1), Some(true));
         assert_eq!(bitmap.is_allocated(2), Some(false));
@@ -480,9 +479,9 @@ mod tests {
     fn test_block_bitmap_find_free() {
         let mut data = vec![0xFFu8; 128];
         data[10] = 0b11111101; // 第1位空闲
-        
+
         let bitmap = BlockBitmap::new(&data, 1024);
-        
+
         assert_eq!(bitmap.find_first_free(), Some(10 * 8 + 1));
     }
 
@@ -490,7 +489,7 @@ mod tests {
     fn test_block_bitmap_mut_allocate() {
         let mut data = vec![0u8; 128];
         let mut bitmap = BlockBitmapMut::new(&mut data, 1024);
-        
+
         assert!(bitmap.allocate(5).is_ok());
         assert_eq!(bitmap.is_allocated(5), Some(true));
         assert_eq!(bitmap.allocate(5), Err(BitmapError::AlreadyAllocated));
@@ -500,9 +499,9 @@ mod tests {
     fn test_inode_bitmap_basic() {
         let mut data = vec![0u8; 32]; // 256个inode
         data[0] = 0xFF; // 前8个已分配
-        
+
         let bitmap = InodeBitmap::new(&data, 256);
-        
+
         assert_eq!(bitmap.find_first_free(), Some(8));
         assert_eq!(bitmap.count_allocated(), 8);
     }

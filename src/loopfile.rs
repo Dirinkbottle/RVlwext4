@@ -3,14 +3,14 @@
 use alloc::vec::Vec;
 use log::{error, info};
 
-use crate::blockdev::{Jbd2Dev, BlockDevice, BlockDevResult};
+use crate::BlockDevError;
+use crate::blockdev::{BlockDevResult, BlockDevice, Jbd2Dev};
 use crate::config::BLOCK_SIZE;
 use crate::disknode::Ext4Inode;
+use crate::disknode::{Ext4Extent, Ext4ExtentHeader};
+use crate::endian::DiskFormat;
 use crate::entries::classic_dir;
 use crate::ext4::Ext4FileSystem;
-use crate::BlockDevError;
-use crate::endian::DiskFormat;
-use crate::disknode::{Ext4ExtentHeader, Ext4Extent};
 use crate::extents_tree::ExtentTree;
 use crate::hashtree::lookup_directory_entry;
 
@@ -27,7 +27,9 @@ pub fn resolve_inode_block<B: BlockDevice>(
         if let Some(ext) = tree.find_extent(block_dev, logical_block)? {
             let mut len = ext.ee_len as u32;
             // 最高位表示 uninitialized 标志，长度使用低 15 位
-            if (len & 0x8000) != 0 { len &= 0x7FFF; }
+            if (len & 0x8000) != 0 {
+                len &= 0x7FFF;
+            }
             if len == 0 {
                 return Ok(None);
             }
@@ -133,8 +135,8 @@ pub fn resolve_inode_block<B: BlockDevice>(
 
     let idx0 = idx / level1_span; // 第一级索引
     let rem = idx % level1_span;
-    let idx1 = rem / per_block;   // 第二级索引
-    let idx2 = rem % per_block;   // 第三级索引
+    let idx1 = rem / per_block; // 第二级索引
+    let idx2 = rem % per_block; // 第三级索引
 
     // 第一级
     let l0_cached = fs.datablock_cache.get_or_load(block_dev, l0_blk as u64)?;
@@ -200,8 +202,7 @@ pub fn get_file_inode<B: BlockDevice>(
     }
 
     // 按 '/' 分割，过滤掉空段
-    let mut components = path.split('/')
-        .filter(|s| !s.is_empty());
+    let mut components = path.split('/').filter(|s| !s.is_empty());
 
     // 从根目录开始逐级解析，并维护一个路径栈以支持 ".." 回溯
     let mut current_inode = fs.get_root(block_dev)?;
@@ -245,7 +246,7 @@ pub fn get_file_inode<B: BlockDevice>(
             Err(_) => {
                 // 哈希树查找失败，回退到线性查找
                 error!("Hash tree lookup failed, falling back to linear search");
-                
+
                 // 根据目录 inode.size 计算逻辑块数，逐块搜索目录项
                 let total_size = current_inode.size() as usize;
                 let block_bytes = BLOCK_SIZE as usize;
@@ -254,18 +255,20 @@ pub fn get_file_inode<B: BlockDevice>(
                 } else {
                     (total_size + block_bytes - 1) / block_bytes
                 };
-                info!("Directory inode size: {} bytes, blocks used: {}", &total_size, &total_blocks);
+                info!(
+                    "Directory inode size: {} bytes, blocks used: {}",
+                    &total_size, &total_blocks
+                );
 
                 for lbn in 0..total_blocks {
-                    let phys = match resolve_inode_block(fs, block_dev, &mut current_inode, lbn as u32)? {
-                        Some(b) => b,
-                        None => continue,
-                    };
+                    let phys =
+                        match resolve_inode_block(fs, block_dev, &mut current_inode, lbn as u32)? {
+                            Some(b) => b,
+                            None => continue,
+                        };
                     info!("Logical block {} mapped to physical block {}", &lbn, &phys);
 
-                    let cached_block = fs
-                        .datablock_cache
-                        .get_or_load(block_dev, phys as u64)?;
+                    let cached_block = fs.datablock_cache.get_or_load(block_dev, phys as u64)?;
                     let block_data = &cached_block.data[..block_bytes];
 
                     if let Some(entry) = classic_dir::find_entry(block_data, target) {

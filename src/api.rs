@@ -1,13 +1,13 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::blockdev::{Jbd2Dev, BlockDevice, BlockDevResult, BlockDevError};
+use crate::blockdev::{BlockDevError, BlockDevResult, BlockDevice, Jbd2Dev};
 use crate::disknode::Ext4Inode;
-use crate::ext4::Ext4FileSystem;
 use crate::ext4;
+use crate::ext4::Ext4FileSystem;
 use crate::loopfile::get_file_inode;
 use crate::mkd::split_paren_child_and_tranlatevalid;
-use crate::mkfile::{mkfile, write_file, read_file};
+use crate::mkfile::{mkfile, read_file, write_file};
 
 /// 文件句柄
 pub struct OpenFile {
@@ -36,7 +36,11 @@ pub fn open_file<B: BlockDevice>(
     let norm_path = split_paren_child_and_tranlatevalid(path);
 
     if let Ok(Some(inode)) = get_file_inode(fs, dev, &norm_path) {
-        return Ok(OpenFile { path: norm_path, inode, offset: 0 });
+        return Ok(OpenFile {
+            path: norm_path,
+            inode,
+            offset: 0,
+        });
     }
 
     if !create {
@@ -48,7 +52,11 @@ pub fn open_file<B: BlockDevice>(
         None => return Err(BlockDevError::WriteError),
     };
 
-    Ok(OpenFile { path: norm_path, inode, offset: 0 })
+    Ok(OpenFile {
+        path: norm_path,
+        inode,
+        offset: 0,
+    })
 }
 
 ///写入文件:基于当前offset追加写入
@@ -103,4 +111,3 @@ pub fn read_from_file<B: BlockDevice>(
     file.offset = end;
     Ok(slice)
 }
-
